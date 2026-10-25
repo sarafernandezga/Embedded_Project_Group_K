@@ -1,0 +1,210 @@
+{
+  "version": "2.0.0",
+
+  // Variables de entorno necesarias (se definen con scripts/setup-env.ps1):
+  //   ZEPHYR_SDK_INSTALL_DIR, ZEPHYR_BASE, ZEPHYR_WORKSPACE,
+  //   WEST_EXE, STM32_PROGRAMMER_CLI, PLINK_EXE
+
+  "tasks": [
+
+    // ============================================================
+    // BUILD
+    // ============================================================
+    {
+      "label": "West Build (auto)",
+      "type": "shell",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "windows": {
+        "command": "${env:WEST_EXE}"
+      },
+      "args": [
+        "build",
+        "-p", "auto",
+        "-b", "nucleo_wl55jc",
+        "${workspaceFolder}",
+        "-d", "${workspaceFolder}/build",
+        "-DZephyr-sdk_DIR=${env:ZEPHYR_SDK_INSTALL_DIR}/cmake",
+        "-DUSER_CACHE_DIR=${workspaceFolder}/.zephyr-cache",
+        "-DDTC_OVERLAY_FILE='./boards/nucleo_wl55jc.overlay'",
+        "-DCONF_FILE='./confs/prj_nucleo_wl55jc.conf'",
+        "-DUSE_CCACHE=0",
+        "-DCMAKE_POLICY_DEFAULT_CMP0219=NEW",
+      ],
+      "options": {
+        "cwd": "${env:ZEPHYR_WORKSPACE}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+
+    // ============================================================
+    // FLASH
+    // ============================================================
+    {
+      "label": "Flash (CubeProgrammer, UR+HWrst)",
+      "type": "shell",
+      "windows": {
+        "command": "${env:STM32_PROGRAMMER_CLI}"
+      },
+      "args": [
+        "--connect",
+        "port=swd",
+        "mode=UR",
+        "reset=HWrst",
+        "--download",
+        "${workspaceFolder}\\build\\zephyr\\zephyr.hex",
+        "--start"
+      ],
+      "problemMatcher": []
+    },
+
+    // ============================================================
+    // SERIAL - LIST PORTS
+    // ============================================================
+    {
+      "label": "List COM Ports",
+      "type": "shell",
+      "windows": {
+        "command": "powershell"
+      },
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-Command",
+        "Get-CimInstance Win32_SerialPort | Select-Object DeviceID, Name, Description"
+      ],
+      "problemMatcher": []
+    },
+
+    // ============================================================
+    // SERIAL MONITOR (el puerto COM se pide al ejecutar la tarea)
+    // ============================================================
+    {
+      "label": "Serial Monitor",
+      "type": "shell",
+      "windows": {
+        "command": "${env:PLINK_EXE}"
+      },
+      "args": [
+        "-serial",
+        "${input:comPort}",
+        "-sercfg",
+        "115200,8,n,1,N"
+      ],
+      "problemMatcher": []
+    },
+
+    // ============================================================
+    // CLEAN BUILD
+    // ============================================================
+    {
+      "label": "Clean Build",
+      "type": "shell",
+      "windows": {
+        "command": "powershell"
+      },
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-Command",
+        "Remove-Item -Recurse -Force \"${workspaceFolder}/build\" -ErrorAction SilentlyContinue"
+      ],
+      "problemMatcher": []
+    },
+
+    // ============================================================
+    // CLEAN CACHE
+    // ============================================================
+    {
+      "label": "Clean Cache",
+      "type": "shell",
+      "windows": {
+        "command": "powershell"
+      },
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-Command",
+        "Remove-Item -Recurse -Force \"${workspaceFolder}/.zephyr-cache\" -ErrorAction SilentlyContinue"
+      ],
+      "problemMatcher": []
+    },
+
+    // ============================================================
+    // DEBUG SERVER
+    //
+    // 1. Compila
+    // 2. Ejecuta west debugserver sobre ESE build
+    // 3. Espera a que OpenOCD abra :3333
+    // ============================================================
+    {
+      "label": "Zephyr: Debug Server",
+      "type": "shell",
+      "windows": {
+        "command": "${env:WEST_EXE}"
+      },
+      "args": [
+        "debugserver",
+        "-d", "${workspaceFolder}/build"
+      ],
+      "options": {
+        "cwd": "${env:ZEPHYR_WORKSPACE}"
+      },
+      "dependsOn": [
+        "West Build (auto)"
+      ],
+      "dependsOrder": "sequence",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "zephyr-debug",
+        "pattern": {
+          "regexp": "^(.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "endsPattern": "OpenOCD GDB server running on port 3333.*"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+
+    // ============================================================
+    // STOP OPENOCD
+    // ============================================================
+    {
+      "label": "Zephyr: Stop Debug Server",
+      "type": "shell",
+      "windows": {
+        "command": "taskkill"
+      },
+      "args": [
+        "/F",
+        "/IM",
+        "openocd.exe"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "close": true
+      }
+    }
+  ],
+
+  "inputs": [
+    {
+      "id": "comPort",
+      "type": "promptString",
+      "description": "Puerto COM de la placa (ver tarea 'List COM Ports')",
+      "default": "COM3"
+    }
+  ]
+}

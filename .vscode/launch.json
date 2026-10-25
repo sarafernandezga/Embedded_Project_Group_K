@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Zephyr - NUCLEO-WL55JC",
+      "type": "cortex-debug",
+      "request": "launch",
+
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/build/zephyr/zephyr.elf",
+
+      "servertype": "external",
+      "gdbTarget": "localhost:3333",
+
+      "armToolchainPath": "${env:ZEPHYR_SDK_INSTALL_DIR}/gnu/arm-zephyr-eabi/bin",
+      "toolchainPrefix": "arm-zephyr-eabi",
+      "gdbPath": "${env:ZEPHYR_SDK_INSTALL_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb.exe",
+
+      "preLaunchTask": "Zephyr: Debug Server",
+      "runToEntryPoint": "main",
+      "postDebugTask": "Zephyr: Stop Debug Server",
+      "showDevDebugOutput": "none"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "terminal.integrated.env.windows": {
+    "ZEPHYR_TOOLCHAIN_VARIANT": "zephyr",
+
+    "ZEPHYR_SDK_INSTALL_DIR": "${env:ZEPHYR_SDK_INSTALL_DIR}",
+
+    "ZEPHYR_BASE": "${env:ZEPHYR_BASE}",
+
+    "ZEPHYR_DIR": "${env:ZEPHYR_DIR}",
+
+    "PROJECT_DIR": "${workspaceFolder}"
+  },
+
+  "cortex-debug.armToolchainPath":
+    "${env:ZEPHYR_SDK_INSTALL_DIR}/gnu/arm-zephyr-eabi/bin",
+
+  "cortex-debug.armToolchainPrefix":
+    "arm-zephyr-eabi",
+
+  "cortex-debug.gdbPath":
+    "${env:ZEPHYR_SDK_INSTALL_DIR}/gnu/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb.exe"
+}
