@@ -1,9 +1,61 @@
 #include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
 
 / {
+	rgb_leds {
+        compatible = "gpio-leds";
+
+        rgb_blue: rgb-blue {
+            gpios = <&gpioc 2 GPIO_ACTIVE_LOW>;
+        };
+
+        rgb_green: rgb-green {
+            gpios = <&gpioc 1 GPIO_ACTIVE_LOW>;
+        };
+
+        rgb_red: rgb-red {
+            gpios = <&gpiob 5 GPIO_ACTIVE_LOW>;
+        };
+    };
+
 	aliases {
-		led0 = &blue_led_1; 	// This is LED1 as labeled STM32WL55JC board's 
-		//led0 = &green_led_2; 	// This is LED2 as labeled STM32WL55JC board's 
-		//led0 = &red_led_3; 	// This is LED3 as labeled STM32WL55JC board's 
+
+		blue = &blue_led_1;	// LED1 on the STM32WL55JC Nucleo board
+		green = &green_led_2;
+		red = &red_led_3;
+		
+		rgbred = &rgb_red;
+        rgbgreen = &rgb_green;
+        rgbblue = &rgb_blue;
+
+        userbt = &user_button_2; //sw2 
+
 	};
+};
+
+&i2c2 {
+	si7021: si7021@40 {
+		compatible = "silabs,si7006";
+		reg = <0x40>;
+		status = "okay";
+	};
+};
+
+
+&adc1 {
+    #address-cells = <1>;
+    #size-cells = <0>;
+
+    channel5: channel@5 {
+        reg = <5>;
+        zephyr,gain = "ADC_GAIN_1";
+        zephyr,reference = "ADC_REF_INTERNAL";
+        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+        zephyr,resolution = <12>;
+    };
+};
+
+/ {
+    zephyr,user {
+        io-channels = <&adc1 5>;
+    };
 };
