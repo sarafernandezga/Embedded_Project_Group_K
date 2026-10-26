@@ -1,5 +1,12 @@
-#include "../includes/includes.h"
-#include "../sensors/enviroment.h"
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/adc.h>
+#include <errno.h>
+#include <stdint.h>
+#include <stddef.h>
+
+#include "enviroment.h"
 
 /* ADC Variables */
 #define ADC_NODE DT_PATH(zephyr_user)
@@ -12,7 +19,7 @@ static int16_t sample;
 K_SEM_DEFINE(sem_env_gate, 0, 1);
 
 /* Message Queue */
-K_MSGQ_DEFINE_TYPE(env_q, struct env_m , 1);
+K_MSGQ_DEFINE(env_q, sizeof(struct env_m), 1, 4);
 
 /* Timer callback */
 static void env_timer_handler(struct k_timer *timer)
@@ -24,6 +31,12 @@ static void env_timer_handler(struct k_timer *timer)
 }
 
 K_TIMER_DEFINE(env_timer, env_timer_handler, NULL);
+
+
+/* ------ I2C ------*/
+#define I2C_NODE DT_ALIAS(si7021) // Set it up in the device tree file
+
+static const struct device *i2c = DEVICE_DT_GET(I2C_NODE);
 
 // ============================================================
 // Light monitoring (LDC)
@@ -58,20 +71,38 @@ static int initialize_adc(struct adc_sequence *sequence)
 }
 
 /* ADC Measurement */
-/* Reads the ADC value and sends the result to the message queue */
-static int take_LDC_measure(struct adc_sequence *sequence){
-    /* Take raw measurement from ADC */
-    int ret = adc_read_dt(&adc_ch, sequence);
+/* Reads the ADC value */
+static int take_LDC_measure(struct adc_sequence *sequence,
+                            float *light)
+{
+    int ret;
+    float light_raw;
 
-    if (ret != 0) {
+    if (light == NULL) {
+        return -EINVAL;
+    }
+
+    ret = adc_read_dt(&adc_ch, sequence);
+
+    if (ret < 0) {
         printk("ADC: Error reading: %d\n", ret);
         return ret;
     }
 
-    /* Convert the ADC value to a percentage */
-    uint32_t light = 100 - ((int)sample * 100 / 4095);
+    /* Convert raw ADC value to percentage */
+    light_raw = 100.0f - ((float)sample * 100.0f / 4095.0f);
 
-    return light;
+    /* Calibrate */
+    *light = (light_raw - 25.0f) * 100.0f / (85.0f - 25.0f);
+
+    /* Limitate range between 0-100 % */
+    if (*light < 0.0f) {
+        *light = 0.0f;
+    } else if (*light > 100.0f) {
+        *light = 100.0f;
+    }
+
+    return 0;
 }
 
 /* ADC Pause Control */
@@ -95,7 +126,86 @@ void set_state_adc(bool pause)
 // Temperature and Humidity (Si7021)
 // ============================================================
 
+static int initialize_Si7021(void){
+    if (!device_is_ready(i2c)) {
+        return -ENODEV;
+    }
 
+    return 0;
+
+}
+
+
+static int measure_humidity(float *humidity)
+{
+    uint8_t cmd = SI7021_MEASURE_RH;
+    uint8_t data[3];
+    uint16_t raw;
+    int ret;
+
+    if (humidity == NULL) {
+        return -EINVAL;
+    }
+
+    /* Send measure command */
+    ret = i2c_write(i2c, &cmd, 1, SI7021_ADDR);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Read two bytes and CRC */
+    ret = i2c_read(i2c, data, sizeof(data), SI7021_ADDR);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Check CRC */
+    // IMPORTANTE: Comprobar el CRC 
+    //if (data[2] != si7021_crc8(data, 2)) {
+      //  return -EIO;
+    //}
+
+    /* Combine MSB and LSB */
+    raw = ((uint16_t)data[0] << 8) | data[1];
+
+    /* Convert to relative humidity */
+    *humidity = 125.0f * (float)raw / 65536.0f - 6.0f;
+
+    return 0;
+}
+
+
+static int measure_temperature(float *temperature)
+{
+    uint8_t cmd = SI7021_READ_TEMP_FROM_RH;
+    uint8_t data[2];
+    uint16_t raw;
+    int ret;
+
+    if (temperature == NULL) {
+        return -EINVAL;
+    }
+
+    /* Send command to read previous temperature */
+    ret = i2c_write(i2c, &cmd, 1, SI7021_ADDR);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Read temperature: only 2 bytes, no CRC */
+    ret = i2c_read(i2c, data, sizeof(data), SI7021_ADDR);
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Combine MSB and LSB */
+    raw = ((uint16_t)data[0] << 8) | data[1];
+
+    /* Convert to Celsius */
+    *temperature = 175.72f * (float)raw / 65536.0f - 46.85f;
+
+    return 0;
+}
 
 // ============================================================
 // Thread
@@ -106,10 +216,11 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
 
-    uint32_t light;
-    uint32_t temp = 0;
-    uint32_t hum = 0;
     int ret;
+
+    float light;
+    float temperature;
+    float humidity;
 
      /* Variables */
     struct adc_sequence sequence = {
@@ -125,6 +236,14 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
         return;
     }
 
+    /* Initialize Si0721 */
+    ret = initialize_Si7021();
+
+    if (ret < 0) {
+        printk("Error inicializando I2C/Si7021: %d\n", ret);
+        return;
+    }
+
     /* Initialize measures */
     set_state_adc(false);
 
@@ -133,13 +252,29 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
         k_sem_take(&sem_env_gate, K_FOREVER);
 
         /* Take measurements from sensors */
-        light = take_LDC_measure(&sequence);
-        //take_temp_hum_measure();
+        ret = take_LDC_measure(&sequence, &light);
+        if (ret < 0) {
+            printk("Error en luz: %d\n", ret);
+            continue;
+        }
+
+        ret = measure_humidity(&humidity);
+        if (ret < 0) {
+            printk("Error en humedad: %d\n", ret);
+            continue;
+        }
+
+        ret = measure_temperature(&temperature);
+        if (ret < 0) {
+            printk("Error en temperatura: %d\n", ret);
+            continue;
+        }
+
 
         /* Update message */
         struct env_m menv = {
-            .temp = temp,
-            .hum = hum,
+            .temp = temperature,
+            .hum = humidity,
             .light = light
         };
         
