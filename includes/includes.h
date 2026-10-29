@@ -5,12 +5,12 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/sensor.h>
-#include <stdbool.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/sys/printk.h>
-#include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
-
+#include <stddef.h>
+#include <errno.h>
 
 
 #endif

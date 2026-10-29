@@ -29,17 +29,10 @@
 
         userbt = &user_button_2; //sw2 
 
+        si7021 = &i2c2;
+
 	};
 };
-
-&i2c2 {
-	si7021: si7021@40 {
-		compatible = "silabs,si7006";
-		reg = <0x40>;
-		status = "okay";
-	};
-};
-
 
 &adc1 {
     #address-cells = <1>;
@@ -59,3 +52,11 @@
         io-channels = <&adc1 5>;
     };
 };
+
+&i2c2 {
+    status = "okay";
+    clock-frequency = <100000>;
+};
+
+
+

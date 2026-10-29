@@ -10,4 +10,6 @@ target_sources(app PRIVATE
     src/sensors/enviroment.c
 )
 
-target_include_directories(app PRIVATE)
+target_include_directories(app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/includes
+)
