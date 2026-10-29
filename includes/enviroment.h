@@ -14,15 +14,30 @@
 
 #define SI7021_READ_TEMP_FROM_RH  0xE0
 
+/* CRC */
+#define CRC_POLINOMIAL            0x31
+
 /* ----------- LCD -----------*/
 #define MAX_CALIBRATE_LCD   95
 #define MIN_CALIBRATE_LCD   25
+
+/* Thread Status */
+enum env_status {
+    ALL_OK,
+    LIGHT_FAIL,
+    SI7021_FAIL,
+    TEMP_FAIL,
+    MULTIPLE_FAIL,
+    ADC_INIT_FAIL,
+    SI7021_INIT_FAIL
+};
 
 /* Struct ADC Message */
 struct env_m {
     float temp;
     float hum;
     float light;
+    enum env_status status;
 };
 
 /* Message Queue ID */
@@ -30,8 +45,5 @@ extern struct k_msgq env_q;
 
 /* Semaphore ID */
 extern struct k_sem sem_env_gate;
-
-/* ADC Pause Control */
-void set_state_adc(bool pause);
 
 #endif
