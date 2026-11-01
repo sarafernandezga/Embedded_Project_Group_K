@@ -8,6 +8,7 @@ project(blink_basic)
 target_sources(app PRIVATE 
     src/main.c
     src/sensors/enviroment.c
+    src/sensors/IMU.c
 )
 
 target_include_directories(app PRIVATE
