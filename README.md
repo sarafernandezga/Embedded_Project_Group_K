@@ -267,7 +267,322 @@ The current implementation has several aspects to consider during error handling
 
 These points should be considered when refining the error-reporting logic and making the module easier to maintain.
 
+### 5.X. GPS Module (`gps.c` / `gps.h`)
 
+**Status: Initial implementation.**
+
+The GPS module acquires geographical information using the Adafruit Ultimate GPS Breakout v3, based on the PA6H GPS receiver. The module communicates with the microcontroller through a UART interface and receives NMEA sentences containing GPS information.
+
+The received data is processed by a dedicated Zephyr thread. This thread reconstructs the NMEA sentences, extracts the relevant information from GGA messages, converts geographical coordinates into decimal degrees, and sends valid GPS measurements to the rest of the application through a message queue.
+
+The module is divided into two files:
+
+- **`gps.c`** — Implements UART initialization, GPS configuration, interrupt-driven reception, buffering, NMEA sentence processing, coordinate conversion and thread execution.
+- **`gps.h`** — Defines the GPS data structure, configuration constants, buffer parameters and declarations of the synchronization objects shared with other modules.
+
+#### Hardware and Devicetree Configuration
+
+The GPS receiver communicates with the microcontroller using UART. The USART1 peripheral is configured in the Devicetree overlay.
+
+The relevant configuration is:
+
+```dts
+&usart1 {
+    status = "okay";
+    current-speed = <9600>;
+    pinctrl-0 = <&usart1_tx_pb6 &usart1_rx_pb7>;
+    pinctrl-names = "default";
+};
+```
+
+The UART interface uses a baud rate of 9600 bits per second, corresponding to the default communication speed of the GPS receiver.
+
+The connection between the GPS module and the NUCLEO-WL55JC board is:
+
+| GPS Breakout | STM32WL55JC |
+|---|---|
+| TX | PB7 (USART1_RX) |
+| RX | PB6 (USART1_TX) |
+| GND | GND |
+| VIN | 3.3 V |
+
+The GPS TX pin is connected to the microcontroller RX pin because the receiver transmits data to the microcontroller. Similarly, the GPS RX pin is connected to the microcontroller TX pin to allow the microcontroller to send configuration commands.
+
+The UART configuration is accessed in the application using the following definitions:
+
+```c
+#define GPS_UART_NODE DT_NODELABEL(usart1)
+
+static const struct device *gps_uart =
+    DEVICE_DT_GET(GPS_UART_NODE);
+```
+
+`DT_NODELABEL(usart1)` identifies the USART1 peripheral in the Devicetree, while `DEVICE_DT_GET()` obtains the corresponding Zephyr device instance.
+
+#### Header File and Shared Definitions (`gps.h`)
+
+The `gps.h` file centralizes the definitions required by the GPS module and the rest of the application.
+
+**GPS measurement data structure**
+
+The `gps_data` structure groups the information extracted from a valid GPS measurement:
+
+```c
+struct gps_data {
+    float latitude;
+    float longitude;
+    float altitude;
+    float hdop;
+    int fix_quality;
+    int satellites;
+};
+```
+
+Its fields are:
+
+- `latitude`: geographical latitude expressed in decimal degrees.
+- `longitude`: geographical longitude expressed in decimal degrees.
+- `altitude`: altitude above mean sea level, expressed in metres.
+- `hdop`: Horizontal Dilution of Precision, an indicator of horizontal positioning quality.
+- `fix_quality`: indicates the type or availability of the GPS fix. A value of zero means that no valid fix is available.
+- `satellites`: number of satellites used to calculate the position.
+
+Grouping the GPS measurements into a single structure allows the module to transfer the complete set of information through one message queue operation.
+
+**Shared synchronization objects**
+
+The GPS module uses a semaphore and a message queue to coordinate data reception and transfer the processed measurements to other application threads.
+
+These objects are declared in the header using `extern` declarations:
+
+```c
+extern struct k_msgq gps_msgq;
+```
+
+Their definitions are located in `gps.c`. This allows other source files, such as `main.c`, to access the same message queue without creating additional instances.
+
+#### UART Initialization and GPS Configuration
+
+The `gps_uart_init()` function initializes the UART interface used by the GPS receiver.
+
+The initialization process includes:
+
+1. Checking whether the USART1 device is ready using `device_is_ready()`.
+2. Registering the UART interrupt callback.
+3. Enabling UART reception interrupts.
+4. Sending configuration commands to the GPS receiver.
+
+The GPS receiver uses PMTK commands to configure its output.
+
+The current configuration requests GGA sentences and sets the output update rate to 1 Hz. This reduces the amount of incoming data and focuses the application on the GPS information required by the project.
+
+The commands are transmitted through the UART interface using `uart_poll_out()`.
+
+The GPS receiver continues transmitting NMEA sentences automatically after initialization.
+
+#### UART Reception and Interrupt Handling
+
+The GPS module uses interrupt-driven UART reception to receive data without continuously polling the peripheral.
+
+The UART callback is responsible for reading the received bytes from the UART FIFO and storing them in a ring buffer.
+
+The reception process follows these steps:
+
+1. The UART interrupt is triggered when data is available.
+2. The callback reads the received bytes using `uart_fifo_read()`.
+3. The bytes are copied into the GPS ring buffer using `ring_buf_put()`.
+4. A semaphore is released to notify the GPS processing thread that data is available.
+
+The interrupt callback does not perform NMEA parsing or lengthy processing operations. Its responsibility is limited to receiving and buffering the incoming bytes.
+
+This approach reduces the processing time inside the interrupt context and allows the GPS thread to handle the received data independently.
+
+**Ring buffer**
+
+The ring buffer temporarily stores the incoming UART bytes until the GPS thread processes them.
+
+This is particularly useful because the GPS receiver transmits complete NMEA sentences as a continuous stream of characters. The UART callback may receive only part of a sentence during a single interrupt.
+
+The ring buffer allows the application to reconstruct the original byte stream even when the data arrives in several reception events.
+
+#### NMEA Sentence Processing
+
+The GPS receiver transmits information using the NMEA 0183 format. NMEA sentences are ASCII messages that begin with the `$` character and contain comma-separated fields.
+
+For example, a GGA sentence has the following structure:
+
+```text
+$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47
+```
+
+The application uses the `gps_process_byte()` function to reconstruct complete NMEA sentences from the bytes stored in the ring buffer.
+
+The function performs the following operations:
+
+1. Detects the beginning of a new sentence when the `$` character is received.
+2. Stores incoming characters in the NMEA buffer.
+3. Checks that the buffer does not exceed its maximum capacity.
+4. Detects the end of the sentence when the newline character (`\n`) is received.
+5. Adds the null terminator to obtain a valid C string.
+6. Passes the complete sentence to the parsing functions.
+
+Once a complete sentence has been reconstructed, the `gps_split_nmea()` function separates its fields.
+
+This function replaces commas with null terminators and stores pointers to the individual fields in an array.
+
+Empty fields are preserved, which is important because NMEA sentences may contain unavailable measurements, especially when the GPS receiver has not acquired a valid position.
+
+#### GGA Message Interpretation
+
+The current implementation focuses on GGA sentences, which provide information about the GPS position and its quality.
+
+The GGA fields are interpreted as follows:
+
+| Field | Description |
+|---|---|
+| `fields[1]` | UTC time |
+| `fields[2]` | Latitude |
+| `fields[3]` | Latitude direction (N/S) |
+| `fields[4]` | Longitude |
+| `fields[5]` | Longitude direction (E/W) |
+| `fields[6]` | Fix quality |
+| `fields[7]` | Number of satellites used |
+| `fields[8]` | Horizontal Dilution of Precision (HDOP) |
+| `fields[9]` | Altitude |
+| `fields[10]` | Altitude unit |
+| `fields[11]` | Geoid separation |
+| `fields[12]` | Geoid separation unit |
+
+The `gps_process_fields()` function checks whether the received sentence is a supported GGA message (`$GPGGA` or `$GNGGA`) and extracts the corresponding information.
+
+The function also checks the fix quality to determine whether the receiver has obtained a valid position.
+
+A fix quality of zero indicates that no valid GPS position is available. In this case, the application does not send the measurement to the GPS message queue.
+
+This prevents invalid coordinates from being treated as valid positioning information.
+
+#### Coordinate Conversion
+
+The latitude and longitude values provided by the GPS receiver use the NMEA degrees-and-minutes format.
+
+For example:
+
+- Latitude: `4807.038,N`
+- Longitude: `01131.000,E`
+
+The application converts these values into decimal degrees using the `gps_convert_coordinate()` function.
+
+The conversion separates the degrees from the minutes and divides the minutes by 60:
+
+\[
+\text{Decimal degrees} =
+\text{Degrees} + \frac{\text{Minutes}}{60}
+\]
+
+The direction field determines the sign of the resulting coordinate:
+
+- North (`N`) and East (`E`) produce positive values.
+- South (`S`) and West (`W`) produce negative values.
+
+This conversion makes the coordinates easier to use and display in the rest of the application.
+
+#### GPS Thread Architecture
+
+The GPS processing thread is created using `K_THREAD_DEFINE()`.
+
+```c
+K_THREAD_DEFINE(
+    my_thread_gps_id,
+    1024,
+    my_thread_gps,
+    NULL, NULL, NULL,
+    4,
+    0,
+    0
+);
+```
+
+The thread uses a stack size of 1024 bytes and priority 4.
+
+Its entry function, `my_thread_gps()`, coordinates UART initialization, reception, and NMEA processing.
+
+At startup, the thread initializes the ring buffer and calls `gps_uart_init()` to configure the UART interface and enable reception.
+
+After initialization, the thread enters an infinite loop and waits for the reception semaphore using `k_sem_take()` with `K_FOREVER`.
+
+When the semaphore is released by the UART callback, the thread retrieves the available bytes from the ring buffer using `ring_buf_get()`.
+
+Each received byte is passed to `gps_process_byte()`, which reconstructs complete NMEA sentences and processes them.
+
+The thread repeats this operation until there are no more bytes available in the ring buffer.
+
+This architecture separates UART reception from GPS data processing and prevents the application from continuously polling the UART peripheral.
+
+#### Thread Synchronization and Message Queue
+
+The GPS module uses a semaphore and a message queue to coordinate reception and transfer processed measurements.
+
+**GPS reception semaphore**
+
+The semaphore is defined as a binary semaphore:
+
+```c
+K_SEM_DEFINE(gps_sem, 0, 1);
+```
+
+Its initial count is zero and its maximum count is one.
+
+The GPS processing thread blocks while waiting for the semaphore. When the UART callback stores new data in the ring buffer, it releases the semaphore using `k_sem_give()`.
+
+This mechanism notifies the processing thread that new bytes are available without requiring continuous polling.
+
+**GPS message queue**
+
+The GPS message queue stores processed GPS measurements using the `gps_data` structure.
+
+The queue is defined using Zephyr's `K_MSGQ_DEFINE()` mechanism.
+
+After a valid GGA message has been processed, the GPS module sends the resulting measurement to the queue using `k_msgq_put()`.
+
+The queue allows the GPS processing thread to operate independently from the main application thread.
+
+Only measurements with a valid fix quality are currently sent to the queue. This ensures that the receiving application does not process a position when the GPS receiver has not acquired a valid fix.
+
+#### Main Application Integration and Testing
+
+The main application retrieves GPS measurements from `gps_msgq` and processes them independently from the environmental measurements.
+
+The GPS message queue is accessed using `k_msgq_get()` with `K_NO_WAIT`, allowing the main application to check whether a GPS measurement is available without blocking while waiting for new data.
+
+When a message is available, the application can access the latitude, longitude, altitude, HDOP, fix quality, and number of satellites stored in the `gps_data` structure.
+
+The current implementation has been tested by checking the UART reception and the reconstruction of complete NMEA sentences.
+
+A GGA sentence containing empty position fields, a fix quality of zero, and zero satellites was successfully received and parsed. This confirms that the application can correctly handle a receiver that has not yet acquired a valid GPS position.
+
+The parsing functions can also be tested using a simulated GGA sentence containing known coordinates:
+
+```text
+$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47
+```
+
+This sentence can be used to verify the extraction of the fields and the conversion of latitude and longitude. It represents simulated test data and does not correspond to a position measured by the physical receiver.
+
+A test with a real GPS fix still requires suitable satellite visibility.
+
+#### Implementation Considerations
+
+The current GPS implementation has several aspects to consider during future development:
+
+- The GPS receiver can transmit NMEA sentences without having acquired a valid position. Therefore, receiving a complete sentence does not necessarily mean that valid coordinates are available.
+- The current implementation focuses on GGA messages. Other NMEA sentence types, such as RMC, have not yet been integrated into the position-processing logic.
+- The NMEA checksum is present in the received sentences, but checksum validation is not yet implemented in the current parsing process.
+- Empty NMEA fields must be handled carefully to avoid using invalid or outdated measurement values.
+- The ring buffer has a limited capacity. If incoming data exceeds the available space, bytes may be lost.
+- The return value of `k_msgq_put()` should be checked to detect cases where the GPS message queue is full and a measurement cannot be stored.
+- A real GPS positioning test is still required to verify the complete acquisition process under suitable satellite reception conditions.
+
+These considerations will be addressed in future iterations to improve the reliability of the GPS module and its integration with the rest of the application.
 
 
 
