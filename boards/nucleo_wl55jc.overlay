@@ -58,9 +58,18 @@
     clock-frequency = <100000>;
 };
 
+
 &i2c1 {
     status = "okay";
     clock-frequency = <100000>;
-    pinctrl-0 = <&i2c1_scl_pb6 &i2c1_sda_pb7>; /* Asigna SCL a PA9 y SDA a PA10 */
+    pinctrl-0 = <&i2c1_scl_pa9 &i2c1_sda_pa10>; /* Asigna SCL a PA9 y SDA a PA10 */
+    pinctrl-names = "default";
+};
+
+
+&usart1 {
+    status = "okay";
+    current-speed = <9600>;
+    pinctrl-0 = <&usart1_tx_pb6 &usart1_rx_pb7>;
     pinctrl-names = "default";
 };

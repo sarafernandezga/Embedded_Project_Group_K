@@ -30,7 +30,7 @@ void who_am_i_funct(void)
     // Bucle infinito para que el hilo no muera y ceda el control
     while (1) {
         // Aquí irán las futuras lecturas de aceleración y giroscopio
-        printk("Hilo del acelerómetro activo...\n");
+        //printk("Hilo del acelerómetro activo...\n");
         
         k_msleep(2000); 
     }
