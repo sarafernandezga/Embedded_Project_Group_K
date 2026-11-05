@@ -8,6 +8,7 @@
 #define GPS_MSGQ_MAX_MSGS  1
 
 struct gps_data {
+    char utc_time[9];
     float latitude;
     float longitude;
     float altitude;

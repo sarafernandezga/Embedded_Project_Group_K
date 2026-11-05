@@ -118,7 +118,7 @@ static int gps_uart_init(void)
     uart_irq_rx_enable(gps_uart);
 
     /* Enable only GGA sentences */
-    gps_send_command("$PMTK314,0,0,0,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n");
+    gps_send_command("$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n");
 
     k_sleep(K_MSEC(100));
 
@@ -191,6 +191,8 @@ static float gps_convert_coordinate(float coordinate, char direction)
     return decimal_degrees;
 }
 
+
+
 /* Process the fields extracted from an NMEA sentence */
 static void gps_process_fields(char *fields[], int field_count)
 {
@@ -202,6 +204,22 @@ static void gps_process_fields(char *fields[], int field_count)
     /* Identify the received NMEA sentence */
     if (strcmp(fields[0], "$GPGGA") == 0 ||
         strcmp(fields[0], "$GNGGA") == 0) {
+
+        /* Extract UTC time */
+        if (field_count > 1 && fields[1][0] != '\0') {
+            int hours;
+            int minutes;
+            float seconds;
+
+            if (sscanf(fields[1], "%2d%2d%f",
+                    &hours, &minutes, &seconds) == 3) {
+
+                snprintf(gps_current_data.utc_time,
+                        sizeof(gps_current_data.utc_time),
+                        "%02d:%02d:%02d",
+                        hours, minutes, (int)seconds);
+            }
+        }
 
         if (field_count > 5 &&
             fields[2][0] != '\0' &&
@@ -237,17 +255,9 @@ static void gps_process_fields(char *fields[], int field_count)
         }
 
         /* Send GPS data only when position fix is valid */
-        //if (gps_current_data.fix_quality > 0) {
-        k_msgq_put(&gps_msgq, &gps_current_data, K_NO_WAIT);
-        //}
-
-
-
-    }
-    else if (strcmp(fields[0], "$GPRMC") == 0 ||
-             strcmp(fields[0], "$GNRMC") == 0) {
-
-        /* TODO: Process RMC fields */
+        if (gps_current_data.fix_quality > 0) {
+            k_msgq_put(&gps_msgq, &gps_current_data, K_NO_WAIT);
+        }
 
     }
 }

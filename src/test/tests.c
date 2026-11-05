@@ -60,6 +60,8 @@ void test_gps(void){
     ret = k_msgq_get(&gps_msgq, &gps_data, K_NO_WAIT);
 
     if (ret == 0) {
+        printk("GPS: Hora UTC: %s\n", gps_data.utc_time);
+        
         printk("GPS: Latitud: %.6f | Longitud: %.6f | Altitud: %.2f m\n",
                 (double)gps_data.latitude,
                 (double)gps_data.longitude,
