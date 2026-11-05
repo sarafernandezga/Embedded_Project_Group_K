@@ -1,3 +1,7 @@
+#include <stdio.h> 
+#include <string.h> 
+#include <stdlib.h> 
+
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/ring_buffer.h>
 
@@ -13,31 +17,39 @@ static const struct device *gps_uart = DEVICE_DT_GET(GPS_UART_NODE);
 /* Semaphore used to notify the GPS thread about incoming data */
 K_SEM_DEFINE(gps_sem, 0, 1);
 
-/* Message Queue */
+/* Message queue: delivers parsed GPS data to the rest of the application */
 K_MSGQ_DEFINE(gps_msgq, sizeof(struct gps_data), GPS_MSGQ_MAX_MSGS, 4);
 
-/* Ring buffer */
+/* Ring buffer: raw bytes from the UART, filled by the ISR and read by the thread */
 static uint8_t gps_rx_buffer[GPS_RX_BUFFER_SIZE];
 static struct ring_buf gps_rx_ringbuf;
 
-/* NMEA buffer reconstruct */
+/* Buffer where the current NMEA sentence is rebuilt, and the next write position */
 static char gps_nmea_buffer[GPS_NMEA_BUFFER_SIZE];
 static uint16_t gps_nmea_index = 0;
 
-/* GPS data struct */
+/* GPS data struct (currently unused) */
 static struct gps_data gps_current_data;
 
-/* UART interrupt callback */
+
+// ============================================================
+// UART interrupt callback
+// ============================================================
+/*
+ * Runs every time the UART receives data.
+ * Copies the bytes from the UART FIFO into the ring buffer and wakes up
+ * the GPS thread. It does no parsing, to keep the ISR as short as possible.
+ */
 static void gps_uart_isr(const struct device *dev,
                          void *user_data)
 {
     ARG_UNUSED(user_data);
 
-     uint8_t rx_data[32] = {0};
+    uint8_t rx_data[32] = {0};
     int received;
     uint32_t stored;
     bool data_available = false;
-    static uint32_t gps_rx_overflow_count;
+    static uint32_t gps_rx_overflow_count;   /* Bytes lost because the ring buffer was full */
 
     /* Update UART interrupt status */
     uart_irq_update(dev);
@@ -78,11 +90,16 @@ static void gps_uart_isr(const struct device *dev,
         }
     }
 
+    /* Wake up the GPS thread once, after draining the FIFO */
     if (data_available) {
         k_sem_give(&gps_sem);
     }
 }
 
+// ============================================================
+// Configure GPS
+// ============================================================
+/* Send a null-terminated string to the GPS, byte by byte (blocking, no interrupts) */
 static void gps_send_command(const char *command)
 {
     while (*command != '\0') {
@@ -91,10 +108,42 @@ static void gps_send_command(const char *command)
     }
 }
 
-/* Initialize GPS UART interface */
+/*
+ * Set how often the GPS sends a position (PMTK220 command).
+ * Builds "$PMTK220,<ms>*<checksum>\r\n", where the checksum is the XOR
+ * of every character between '$' and '*', written as two hex digits.
+ */
+void gps_set_update_rate(uint16_t interval_ms)
+{
+    char command[32];
+    char payload[20];
+    uint8_t checksum = 0;
+
+    /* Command body without '$' and checksum */
+    snprintf(payload, sizeof(payload),"PMTK220,%u", interval_ms);
+
+    /* NMEA checksum: XOR of all payload characters */
+    for (int i = 0; payload[i] != '\0'; i++) {
+        checksum ^= payload[i];
+    }
+
+    /* Final frame: $payload*CS\r\n */
+    snprintf(command, sizeof(command), "$%s*%02X\r\n", payload, checksum);
+
+    gps_send_command(command);
+}
+
+
+// ============================================================
+// Initialize GPS UART interface
+// ============================================================
+/*
+ * Prepares the UART: checks the device, registers the ISR, enables RX
+ * interrupts and configures the GPS (GGA sentences only, 0.5 Hz).
+ * Returns 0 on success or a negative errno on failure.
+ */
 static int gps_uart_init(void)
 {
-
     /* Check if the UART device has been successfully initialized */
     if (!device_is_ready(gps_uart)) {
         printk("GPS: UART no esta preparado\n");
@@ -117,30 +166,87 @@ static int gps_uart_init(void)
     /* Enable UART receive interrupts */
     uart_irq_rx_enable(gps_uart);
 
-    /* Enable only GGA sentences */
-    gps_send_command("$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n");
+    /* Enable only GGA sentences (PMTK314 selects which sentences are sent) */
+    gps_send_command("$PMTK314,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*29\r\n");
 
+    /* Give the GPS time to process the command before sending the next one */
     k_sleep(K_MSEC(100));
 
-    /* Set GPS update rate to 1 Hz */
-    gps_send_command("$PMTK220,1000*1F\r\n");
-
-    printk("GPS: UART inicializado correctamente\n");
+    /* Set GPS update rate 0.5 Hz */
+    gps_set_update_rate(2000);
 
     return 0;
 }
 
-/* Initialize GPS circular buffer */
-static void gps_buffer_init(void)
-{
+/* Public init: prepares the ring buffer first, then the UART and the GPS */
+int gps_init(void){
+    
     ring_buf_init(
         &gps_rx_ringbuf,       /* Ring buffer management structure */
         sizeof(gps_rx_buffer), /* Available memory size in bytes */
         gps_rx_buffer          /* Memory area used to store data */
     );
+
+    return gps_uart_init();
 }
 
-/* Split a complete NMEA sentence into individual fields */
+
+
+// ============================================================
+// Reconstruct NMEA sentence byte a byte
+// ============================================================
+/*
+ * Feeds one received byte into the sentence buffer.
+ * A sentence starts at '$' and ends at '\n'.
+ * Returns: 1 = sentence complete (*sentence points to it),
+ *          0 = still incomplete or byte ignored,
+ *         <0 = error (buffer full, sentence discarded).
+ */
+static int gps_process_byte(uint8_t byte, char **sentence)
+{
+    if (sentence == NULL) {
+        return -EINVAL;
+    }
+
+    /* Detect the beginning of a new NMEA sentence */
+    if (byte == '$') {
+        gps_nmea_index = 0;
+    }
+
+    /* Ignore bytes until a sentence starts */
+    if (gps_nmea_index == 0 && byte != '$') {
+        return 0;
+    }
+
+    /* Check buffer capacity */
+    if (gps_nmea_index >= GPS_NMEA_BUFFER_SIZE - 1) {
+        gps_nmea_index = 0;
+        return -ENOMEM;
+    }
+
+    /* Store received byte */
+    gps_nmea_buffer[gps_nmea_index++] = (char)byte;
+
+    /* Check if the sentence is complete */
+    if (byte == '\n') {
+        gps_nmea_buffer[gps_nmea_index] = '\0';   /* Close the string */
+        gps_nmea_index = 0;                        /* Ready for the next sentence */
+
+        *sentence = gps_nmea_buffer;
+        return 1;
+    }
+
+    return 0;
+}
+// ============================================================
+// Transform NMEA sentence into data
+// ============================================================
+/*
+ * Splits a complete sentence into its comma-separated fields.
+ * Each ',' is replaced by '\0', so fields[] ends up pointing to
+ * independent strings inside the original buffer (it modifies the buffer).
+ * Returns the number of fields, or a negative errno on error.
+ */
 static int gps_split_nmea(char *sentence,     // Point to the first character of the NMEA buffer 
                           char *fields[],     // Point buffer to save fields
                           int max_fields)
@@ -176,11 +282,15 @@ static int gps_split_nmea(char *sentence,     // Point to the first character of
     return field_count;
 }
 
-/* Convert an NMEA coordinate to decimal degrees */
+/*
+ * Converts an NMEA coordinate (ddmm.mmmm) to decimal degrees.
+ * Example: 4024.1234 -> 40 degrees + 24.1234 / 60 = 40.402057.
+ * South and West give negative values.
+ */
 static float gps_convert_coordinate(float coordinate, char direction)
 {
-    int degrees = (int)(coordinate / 100.0f);
-    float minutes = coordinate - (degrees * 100.0f);
+    int degrees = (int)(coordinate / 100.0f);               /* Whole degrees */
+    float minutes = coordinate - (degrees * 100.0f);        /* Remaining minutes */
 
     float decimal_degrees = degrees + (minutes / 60.0f);
 
@@ -191,177 +301,162 @@ static float gps_convert_coordinate(float coordinate, char direction)
     return decimal_degrees;
 }
 
-
-
-/* Process the fields extracted from an NMEA sentence */
-static void gps_process_fields(char *fields[], int field_count)
+/*
+ * Fills a gps_data struct from the fields of a GGA sentence.
+ * Empty fields are skipped, so they stay at 0.
+ * Returns: 1 = valid data (fix available),
+ *          0 = not a GGA sentence or no fix,
+ *         <0 = invalid arguments.
+ */
+static int gps_process_fields(char *fields[], int field_count,
+                              struct gps_data *data_out)
 {
-    /* Check if the sentence contains any fields */
-    if (field_count <= 0) {
-        return;
+    if (fields == NULL || data_out == NULL || field_count <= 0) {
+        return -EINVAL;
     }
 
-    /* Identify the received NMEA sentence */
-    if (strcmp(fields[0], "$GPGGA") == 0 ||
-        strcmp(fields[0], "$GNGGA") == 0) {
-
-        /* Extract UTC time */
-        if (field_count > 1 && fields[1][0] != '\0') {
-            int hours;
-            int minutes;
-            float seconds;
-
-            if (sscanf(fields[1], "%2d%2d%f",
-                    &hours, &minutes, &seconds) == 3) {
-
-                snprintf(gps_current_data.utc_time,
-                        sizeof(gps_current_data.utc_time),
-                        "%02d:%02d:%02d",
-                        hours, minutes, (int)seconds);
-            }
-        }
-
-        if (field_count > 5 &&
-            fields[2][0] != '\0' &&
-            fields[3][0] != '\0' &&
-            fields[4][0] != '\0' &&
-            fields[5][0] != '\0') {
-
-            gps_current_data.latitude =
-                gps_convert_coordinate(strtof(fields[2], NULL), fields[3][0]);
-
-            gps_current_data.longitude =
-                gps_convert_coordinate(strtof(fields[4], NULL), fields[5][0]);
-        }
-
-        /* Extract fix quality */
-        if (field_count > 6 && fields[6][0] != '\0') {
-            gps_current_data.fix_quality = atoi(fields[6]);
-        }
-
-        /* Extract number of satellites */
-        if (field_count > 7 && fields[7][0] != '\0') {
-            gps_current_data.satellites = atoi(fields[7]);
-        }
-
-        /* Extract HDOP */
-        if (field_count > 8 && fields[8][0] != '\0') {
-            gps_current_data.hdop = strtof(fields[8], NULL);
-        }
-
-        /* Extract altitude */
-        if (field_count > 9 && fields[9][0] != '\0') {
-            gps_current_data.altitude = strtof(fields[9], NULL);
-        }
-
-        /* Send GPS data only when position fix is valid */
-        if (gps_current_data.fix_quality > 0) {
-            k_msgq_put(&gps_msgq, &gps_current_data, K_NO_WAIT);
-        }
-
-    }
-}
-
-static void gps_process_byte(uint8_t byte)
-{
-    /* Detect the beginning of a new NMEA sentence */
-    if (byte == '$') {
-        gps_nmea_index = 0;
-
+    /* Only GGA sentences are handled */
+    if (strcmp(fields[0], "$GPGGA") != 0 &&
+        strcmp(fields[0], "$GNGGA") != 0) {
+        return 0;
     }
 
-    /* Ignore bytes until a sentence starts */
-    if (gps_nmea_index == 0 && byte != '$') {
-        return;
-    }
+    /* Start clean so no stale values from a previous sentence remain */
+    memset(data_out, 0, sizeof(*data_out));
 
-    /* Check buffer capacity */
-    if (gps_nmea_index >= GPS_NMEA_BUFFER_SIZE - 1) {
-        printk("GPS: NMEA buffer overflow\n");
-        gps_nmea_index = 0;
-        return;
-    }
+    /* Extract UTC time (field 1: hhmmss.sss) and format it as HH:MM:SS */
+    if (field_count > 1 && fields[1][0] != '\0') {
+        int hours;
+        int minutes;
+        float seconds;
 
-    /* Store received byte */
-    gps_nmea_buffer[gps_nmea_index++] = (char)byte;
-
-    /* Check if the sentence is complete */
-    if (byte == '\n') {
-
-        /* Add string terminator */
-        gps_nmea_buffer[gps_nmea_index] = '\0';
-        printk("GPS: Complete sentence:\n%s \n", gps_nmea_buffer);
-
-        /* Split complete NMEA sentence into fields */
-        char *fields[GPS_MAX_FIELDS];
-
-        int field_count = gps_split_nmea(
-            gps_nmea_buffer,
-            fields,
-            GPS_MAX_FIELDS
-        );
-
-        if (field_count > 0) {
-            gps_process_fields(fields, field_count);
+        if (sscanf(fields[1], "%2d%2d%f", &hours, &minutes, &seconds) == 3) {
+            snprintf(data_out->utc_time, sizeof(data_out->utc_time),
+                     "%02d:%02d:%02d", hours, minutes, (int)seconds);
         }
-
-        /* Reset buffer for next sentence */
-        gps_nmea_index = 0;
     }
+
+    /* Extract latitude and longitude (fields 2-5: value + N/S, value + E/W) */
+    if (field_count > 5 &&
+        fields[2][0] != '\0' && fields[3][0] != '\0' &&
+        fields[4][0] != '\0' && fields[5][0] != '\0') {
+
+        data_out->latitude  = gps_convert_coordinate(strtof(fields[2], NULL), fields[3][0]);
+        data_out->longitude = gps_convert_coordinate(strtof(fields[4], NULL), fields[5][0]);
+    }
+
+    /* Extract fix quality (field 6, 0 = no fix) */
+    if (field_count > 6 && fields[6][0] != '\0') {
+        data_out->fix_quality = atoi(fields[6]);
+    }
+
+    /* Extract number of satellites (field 7) */
+    if (field_count > 7 && fields[7][0] != '\0') {
+        data_out->satellites = atoi(fields[7]);
+    }
+
+    /* Extract HDOP, horizontal precision (field 8) */
+    if (field_count > 8 && fields[8][0] != '\0') {
+        data_out->hdop = strtof(fields[8], NULL);
+    }
+
+    /* Extract altitude in meters (field 9) */
+    if (field_count > 9 && fields[9][0] != '\0') {
+        data_out->altitude = strtof(fields[9], NULL);
+    }
+
+    /* Only report data when the position fix is valid */
+    return (data_out->fix_quality > 0) ? 1 : 0;
 }
 
 
+/*
+ * Reads the ring buffer byte by byte until a valid GGA sentence is found.
+ * Pipeline: rebuild sentence -> (checksum) -> split into fields -> extract data.
+ * Returns 1 if gps_data was filled with new data, 0 if the buffer ran out
+ * of bytes without finding one.
+ */
+static int gps_get_data(struct gps_data *gps_data)
+{
+    uint8_t byte;
+    int field_count;
+    char *sentence;
+    char *fields[GPS_MAX_FIELDS];
+    int ret;
+
+    while (ring_buf_get(&gps_rx_ringbuf, &byte, 1) == 1) {
+
+         /* 1. Rebuild the sentence byte by byte */
+        ret = gps_process_byte(byte, &sentence);
+
+        if (ret <= 0) { /* 0: incomplete, <0: discarded. Keep reading bytes */
+            continue;
+        }
+
+        /* 2. Validate checksum (must be before split, which modifies the buffer) */
+        
+
+
+        /* 3. Split into fields */
+        field_count = gps_split_nmea(sentence, fields, GPS_MAX_FIELDS);
+
+        if (field_count <= 0) {
+            continue;
+        }
+
+        /* 4. Extract and convert data */
+        ret = gps_process_fields(fields, field_count, gps_data);
+
+        /* Not a GGA sentence or no fix: keep looking */
+        if (ret == 0) { 
+            continue; 
+        }
+
+        return 1;
+    }
+
+    return 0;
+}
 
 // ============================================================
-// Thread
+// Thread GPS
 // ============================================================
-void my_thread_gps(void *p1, void *p2, void *p3)
+/*
+ * GPS thread: initializes the GPS, then sleeps until the ISR signals new
+ * bytes. When woken, it parses them and publishes any valid position
+ * in gps_msgq for the rest of the application.
+ */
+static void my_thread_gps(void *p1, void *p2, void *p3)
 {
     ARG_UNUSED(p1);
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
 
-    uint8_t rx_data[32];
-    uint32_t received;
 
-    /* Initialize GPS circular buffer */
-    gps_buffer_init();
-
-    /* Initialize GPS device */
-    int ret = gps_uart_init();
-
-    if (ret < 0){
-
-    }
+    struct gps_data data;
+    
+    /* Initialize GPS */
+    int ret = gps_init();
 
     while (1) {
         /* Wait until new GPS data is available */
         k_sem_take(&gps_sem, K_FOREVER);
 
-        /* Read all available bytes from circular buffer */
-        do {
-            received = ring_buf_get(
-                &gps_rx_ringbuf,
-                rx_data,
-                sizeof(rx_data)
-            );
+        /* Parse received bytes and publish the result if it is valid */
+        if (gps_get_data(&data) == 1){
 
-            /* Process each received byte */
-            for (uint32_t i = 0; i < received; i++) {
-                //printk("%c", rx_data[i]);
-                gps_process_byte(rx_data[i]);
-            }
+            k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
+
+        }
         
-        } while (received > 0);
-
     }
 
 }
 
-/* Start gps thread */
+/* Start gps thread automatically at boot */
 K_THREAD_DEFINE(
     my_thread_gps_id,           /* Thread identifier */
-    1024,                        /* Stack size */
+    1024,                       /* Stack size */
     my_thread_gps,              /* Entry function */
     NULL, NULL, NULL,           /* Parameters */
     4,                          /* Priority */
