@@ -10,27 +10,21 @@
 
 /* GPS UART device configuration */
 #define GPS_UART_NODE DT_NODELABEL(usart1)
-
-/* Get the UART device instance from the Device Tree */
 static const struct device *gps_uart = DEVICE_DT_GET(GPS_UART_NODE);
 
-/* Semaphore used to notify the GPS thread about incoming data */
+/* GPS Semaphore */
 K_SEM_DEFINE(gps_sem, 0, 1);
 
-/* Message queue: delivers parsed GPS data to the rest of the application */
+/* GPS Message Queue */
 K_MSGQ_DEFINE(gps_msgq, sizeof(struct gps_data), GPS_MSGQ_MAX_MSGS, 4);
 
-/* Ring buffer: raw bytes from the UART, filled by the ISR and read by the thread */
+/* Ring buffer */
 static uint8_t gps_rx_buffer[GPS_RX_BUFFER_SIZE];
 static struct ring_buf gps_rx_ringbuf;
 
-/* Buffer where the current NMEA sentence is rebuilt, and the next write position */
+/* Buffer Rebuild NMEA sentence */
 static char gps_nmea_buffer[GPS_NMEA_BUFFER_SIZE];
 static uint16_t gps_nmea_index = 0;
-
-/* GPS data struct (currently unused) */
-static struct gps_data gps_current_data;
-
 
 // ============================================================
 // UART interrupt callback
@@ -371,6 +365,93 @@ static int gps_process_fields(char *fields[], int field_count,
 
 
 /*
+ * Converts a hexadecimal character into its decimal value.
+ * Returns:
+ *   0-15 = valid hexadecimal character
+ *     -1 = invalid character
+ */
+static int gps_hex_to_int(char char_num)
+{
+    /* Check if the character is a decimal digit (0-9) */
+    if (char_num >= '0' && char_num <= '9') {
+        return char_num - '0';
+    }
+
+    /* Check if the character is an uppercase hexadecimal letter (A-F) */
+    if (char_num >= 'A' && char_num <= 'F') {
+        return char_num - 'A' + 10;
+    }
+
+    /* Check if the character is a lowercase hexadecimal letter (a-f) */
+    if (char_num >= 'a' && char_num <= 'f') {
+        return char_num - 'a' + 10;
+    }
+
+    /* Return -1 if the character is not hexadecimal */
+    return -1;
+}
+
+
+/*
+ * Verifies the checksum of an NMEA sentence.
+ * Returns:
+ *   1 = valid checksum
+ *   0 = invalid checksum
+ *  <0 = malformed sentence or invalid arguments
+ */
+static int gps_validate_checksum(const char *sentence)
+{
+    /* Check that the input pointer is valid and the sentence starts with '$' */
+    if (sentence == NULL || sentence[0] != '$') {
+        return -EINVAL;
+    }
+
+    /* Find the '*' character that separates the data from the checksum */
+    const char *checksum_ptr = strchr(sentence, '*');
+
+    /* Check that the '*' character exists */
+    if (checksum_ptr == NULL) {
+        return -EINVAL;
+    }
+
+    /* Check that two characters are available after '*' */
+    if (checksum_ptr[1] == '\0' ||
+        checksum_ptr[2] == '\0') {
+        return -EINVAL;
+    }
+
+    /* Check that the sentence ends after the two checksum characters */
+    char end_char = checksum_ptr[3];
+
+    if (end_char != '\0' && end_char != '\r' && end_char != '\n') {
+        return -EINVAL;
+    }
+
+    /* Calculate the checksum using XOR of all characters between '$' and '*' */
+    uint8_t calculated_checksum = 0;
+
+    for (const char *ptr = sentence + 1; ptr < checksum_ptr; ptr++) {
+        calculated_checksum ^= (uint8_t)*ptr;
+    }
+
+    /* Convert hexadecimal characters into its numeric value */
+    int high_nibble = gps_hex_to_int(checksum_ptr[1]);
+    int low_nibble = gps_hex_to_int(checksum_ptr[2]);
+
+    /* Check that both checksum characters are valid hexadecimal digits */
+    if (high_nibble < 0 || low_nibble < 0) {
+        return -EINVAL;
+    }
+
+    /* Combine both hexadecimal digits to reconstruct the received checksum byte */
+    uint8_t received_checksum = (high_nibble << 4) | low_nibble;
+
+    /* Compare the calculated checksum with the received checksum */
+    return (calculated_checksum == received_checksum) ? 1 : 0;
+}
+
+
+/*
  * Reads the ring buffer byte by byte until a valid GGA sentence is found.
  * Pipeline: rebuild sentence -> (checksum) -> split into fields -> extract data.
  * Returns 1 if gps_data was filled with new data, 0 if the buffer ran out
@@ -394,21 +475,23 @@ static int gps_get_data(struct gps_data *gps_data)
         }
 
         /* 2. Validate checksum (must be before split, which modifies the buffer) */
-        
+        ret = gps_validate_checksum(sentence);
 
+        if (ret <= 0) { /* Checksum not match*/
+            continue;
+        }
 
         /* 3. Split into fields */
         field_count = gps_split_nmea(sentence, fields, GPS_MAX_FIELDS);
 
-        if (field_count <= 0) {
+        if (field_count <= 0) {  /* No fields detected */
             continue;
         }
 
         /* 4. Extract and convert data */
         ret = gps_process_fields(fields, field_count, gps_data);
 
-        /* Not a GGA sentence or no fix: keep looking */
-        if (ret == 0) { 
+        if (ret == 0) { /* Not a GGA sentence or no fix: keep looking */
             continue; 
         }
 
