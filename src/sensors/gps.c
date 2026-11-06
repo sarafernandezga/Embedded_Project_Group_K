@@ -472,7 +472,7 @@ static int gps_get_data(struct gps_data *gps_data)
 
         if (ret <= 0) { /* 0: incomplete, <0: discarded. Keep reading bytes */
             continue;
-        }
+        } 
 
         /* 2. Validate checksum (must be before split, which modifies the buffer) */
         ret = gps_validate_checksum(sentence);
@@ -514,7 +514,6 @@ static void my_thread_gps(void *p1, void *p2, void *p3)
     ARG_UNUSED(p1);
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
-
 
     struct gps_data data;
     

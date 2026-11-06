@@ -3,7 +3,7 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/sys/printk.h>
 
-#define I2C_NODE DT_NODELABEL(i2c1) 
+#define I2C_NODE DT_NODELABEL(i2c2) 
 
 #define MPU6050_ADDR    0x68    // Dirección I2C
 #define WHO_AM_I_REG    0x75    // Registro WHO_AM_I
