@@ -5,7 +5,7 @@
 #include <math.h> // mirar si queremos meterlo o si realmente no 
 #include "imu.h"
 
-#define I2C_NODE DT_NODELABEL(i2c1) 
+#define I2C_NODE DT_NODELABEL(i2c2) 
 
 // Definimos la cola de mensajes para el IMU (guarda el último mensaje disponible)
 K_MSGQ_DEFINE(imu_q, sizeof(struct imu_m), 1, 4);
