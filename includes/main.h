@@ -1,3 +1,6 @@
+#ifndef MAIN_H
+#define MAIN_H
+
 /* Leds Modes */
 enum rgb_modes {
     OFF_LED,
@@ -9,3 +12,19 @@ enum rgb_modes {
     CIAN_LED,
     WHITE_LED
 };
+
+
+enum dron_mode {
+    IDLE,
+    FLYING,
+    PROBLEM
+};
+
+enum operating_mode{
+    TEST_MODE,
+    NORMAL_MODE,
+    SIMU_MODE
+};
+
+
+#endif

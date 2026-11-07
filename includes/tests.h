@@ -1,5 +1,5 @@
-#ifndef GPS_H
-#define GPS_H
+#ifndef TEST_H
+#define TEST_H
 
 void test_gps(void);
 void test_enviroment(void);
