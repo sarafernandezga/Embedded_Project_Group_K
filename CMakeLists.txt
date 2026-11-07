@@ -11,6 +11,8 @@ target_sources(app PRIVATE
     src/sensors/IMU.c
     src/sensors/gps.c
     src/test/tests.c
+    src/inputs/button.c
+    src/outputs/rgb.c
 )
 
 target_include_directories(app PRIVATE
