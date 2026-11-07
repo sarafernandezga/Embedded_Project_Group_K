@@ -142,13 +142,13 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
             // Imprimir cada 10 muestras (cada 200 ms) para no saturar la UART y perder los 50 Hz
             if (++print_counter >= 10) {
                 print_counter = 0;
-                printk("ACC [m/s2]: X=%.2f Y=%.2f Z=%.2f | GYR [deg/s]: X=%.1f Y=%.1f Z=%.1f | ANG [deg]: R=%.1f P=%.1f Y=%.1f\n",
+                /*printk("ACC [m/s2]: X=%.2f Y=%.2f Z=%.2f | GYR [deg/s]: X=%.1f Y=%.1f Z=%.1f | ANG [deg]: R=%.1f P=%.1f Y=%.1f\n",
                        (double)mimu.ax, (double)mimu.ay, (double)mimu.az,
                        (double)mimu.gx, (double)mimu.gy, (double)mimu.gz,
-                       (double)mimu.roll, (double)mimu.pitch, (double)mimu.yaw);
+                       (double)mimu.roll, (double)mimu.pitch, (double)mimu.yaw);*/
             }
         } else {
-            printk("Error en lectura burst I2C\n");
+            //printk("Error en lectura burst I2C\n");
         }
 
         k_msgq_purge(&imu_q);

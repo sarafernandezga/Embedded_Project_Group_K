@@ -342,6 +342,7 @@ static int gps_process_fields(char *fields[], int field_count,
     /* Extract fix quality (field 6, 0 = no fix) */
     if (field_count > 6 && fields[6][0] != '\0') {
         data_out->fix_quality = atoi(fields[6]);
+        data_out->status = (data_out->fix_quality > 0) ? GPS_OK : GPS_NO_FIX;
     }
 
     /* Extract number of satellites (field 7) */
@@ -359,8 +360,7 @@ static int gps_process_fields(char *fields[], int field_count,
         data_out->altitude = strtof(fields[9], NULL);
     }
 
-    /* Only report data when the position fix is valid */
-    return (data_out->fix_quality > 0) ? 1 : 0;
+    return 1;
 }
 
 
@@ -477,24 +477,27 @@ static int gps_get_data(struct gps_data *gps_data)
         /* 2. Validate checksum (must be before split, which modifies the buffer) */
         ret = gps_validate_checksum(sentence);
 
-        if (ret <= 0) { /* Checksum not match*/
-            continue;
+        if (ret <= 0) {
+            gps_data->status = GPS_ERR_CHECKSUM;
+            return -1;
         }
 
         /* 3. Split into fields */
         field_count = gps_split_nmea(sentence, fields, GPS_MAX_FIELDS);
 
         if (field_count <= 0) {  /* No fields detected */
-            continue;
+           gps_data->status = GPS_ERR_NO_DATA;
+           return -1;
         }
 
         /* 4. Extract and convert data */
         ret = gps_process_fields(fields, field_count, gps_data);
 
-        if (ret == 0) { /* Not a GGA sentence or no fix: keep looking */
-            continue; 
+        if (ret < 0) {
+            gps_data->status = GPS_ERR_NO_DATA;
+            return -1;
         }
-
+        
         return 1;
     }
 
@@ -511,28 +514,31 @@ static int gps_get_data(struct gps_data *gps_data)
  */
 static void my_thread_gps(void *p1, void *p2, void *p3)
 {
-    ARG_UNUSED(p1);
-    ARG_UNUSED(p2);
-    ARG_UNUSED(p3);
-
     struct gps_data data;
-    
-    /* Initialize GPS */
-    int ret = gps_init();
+    int sem_ret;
 
-    while (1) {
-        /* Wait until new GPS data is available */
-        k_sem_take(&gps_sem, K_FOREVER);
-
-        /* Parse received bytes and publish the result if it is valid */
-        if (gps_get_data(&data) == 1){
-
-            k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
-
-        }
-        
+    if (gps_init() != 0) {
+        data.status = GPS_ERR_NO_DATA;
+        k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
+        return;
     }
 
+    while (1) {
+        /* Si en 5 s no llega nada, hay un problema físico */
+        if ((sem_ret = k_sem_take(&gps_sem, K_SECONDS(3))) != 0) {
+            printk("GPS thread: %s\n", sem_ret == 0 ? "despierta por bytes" : "timeout");
+            data.status = GPS_ERR_NO_DATA;
+            k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
+            continue;
+        }
+
+
+        /* Procesar TODO lo que haya (while, no if) */
+        while ((gps_get_data(&data)) != 0){
+            k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
+        }
+
+    }
 }
 
 /* Start gps thread automatically at boot */

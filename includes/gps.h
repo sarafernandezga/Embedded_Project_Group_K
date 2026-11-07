@@ -11,24 +11,17 @@
 #define GPS_MSGQ_MAX_MSGS  1
 
 enum gps_status {
-    ALL_GPS_OK,
-    GPS_NO_FIX, 
-    GPS_NO_DATA,
-    INIT_GPS_FAIL
+    GPS_OK,
+    GPS_ERR_NO_DATA,   /* silencio: cable o alimentación */
+    GPS_ERR_CHECKSUM,  /* datos corruptos */
+    GPS_NO_FIX,    /* comunica, pero sin posición */
 };
 
 struct gps_data {
-    char utc_time[9];
-
-    float latitude;
-    float longitude;
-    float altitude;
-    float hdop;
-
-    uint8_t satellites;
-    uint8_t fix_quality;
-
-    enum gps_status status;
+    float latitude, longitude, altitude, hdop;   
+    enum gps_status status;                      
+    uint8_t satellites, fix_quality;             
+    char utc_time[9];                           
 };
 
 /* Message Queue ID */

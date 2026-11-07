@@ -3,5 +3,6 @@
 
 void test_gps(void);
 void test_enviroment(void);
+void test_IMU(void);
 
 #endif

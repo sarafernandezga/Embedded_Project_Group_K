@@ -22,5 +22,6 @@ int main(void)
         k_sem_take(&sem_main_gate, K_FOREVER);
         test_enviroment();
         test_gps();
+        //test_IMU();
     }
 }
