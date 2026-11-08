@@ -7,11 +7,13 @@
 #include "button.h"
 #include "tests.h"
 
+K_EVENT_DEFINE(main_events);
+
 static void main_timer_handler(struct k_timer *timer)
 {
     ARG_UNUSED(timer);
 
-    k_sem_give(&sem_main_gate);
+    k_event_post(&main_events, EVT_TIMER);
 }
 
 K_TIMER_DEFINE(main_timer, main_timer_handler, NULL);
@@ -32,21 +34,36 @@ int main(void)
 
     while (1){
 
-        k_sem_take(&sem_main_gate, K_FOREVER);
+        uint32_t ev = k_event_wait(&main_events,
+                                    EVT_BUTTON | EVT_TIMER,
+                                    false,        /* no borrar eventos previos */
+                                    K_FOREVER);
 
-        switch (op_mode){
-        case TEST_MODE:
-            run_test_mode();      /* un "tick" de test */
-            break;
 
-        case NORMAL_MODE:
-            break;
+        if(ev & EVT_BUTTON){
 
-        case SIMU_MODE:
-            break;
-
-        default:
-            break;
         }
+
+        if(ev & EVT_TIMER){
+
+            switch (op_mode){
+                case TEST_MODE:
+                    run_test_mode();      /* un "tick" de test */
+                    break;
+
+                case NORMAL_MODE:
+                    break;
+
+                case SIMU_MODE:
+                    break;
+
+                default:
+                    break;
+                }
+        }
+        
+
+
+
     }
 }

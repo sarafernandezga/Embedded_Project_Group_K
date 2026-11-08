@@ -526,7 +526,6 @@ static void my_thread_gps(void *p1, void *p2, void *p3)
     while (1) {
         /* Si en 5 s no llega nada, hay un problema físico */
         if ((sem_ret = k_sem_take(&gps_sem, K_SECONDS(3))) != 0) {
-            printk("GPS thread: %s\n", sem_ret == 0 ? "despierta por bytes" : "timeout");
             data.status = GPS_ERR_NO_DATA;
             k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
             continue;

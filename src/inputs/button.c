@@ -1,6 +1,7 @@
 #include <zephyr/drivers/gpio.h>
 
 #include "button.h"
+#include "main.h"
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_ALIAS(userbt), gpios);
 
@@ -17,8 +18,8 @@ static void button_isr(const struct device *port,
     ARG_UNUSED(cb);
     ARG_UNUSED(pins);
 
-   /* Notifies the thread when the button state changes */
-    k_sem_give(&sem_main_gate);
+    /* Notifies the thread when the button state changes */
+    k_event_post(&app_events, EVT_BUTTON);
     
 }
 

@@ -14,7 +14,7 @@ enum gps_status {
     GPS_OK,
     GPS_ERR_NO_DATA,   /* silencio: cable o alimentación */
     GPS_ERR_CHECKSUM,  /* datos corruptos */
-    GPS_NO_FIX,    /* comunica, pero sin posición */
+    GPS_NO_FIX,         /* comunica, pero sin posición */
 };
 
 struct gps_data {
