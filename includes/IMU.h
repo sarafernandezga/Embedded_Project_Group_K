@@ -32,4 +32,7 @@ struct imu_m {
 // Declaración externa de la cola de mensajes (para que acceda main.c)
 extern struct k_msgq imu_q;
 
+#define IMU_PERIOD_MS 20
+extern struct k_timer imu_timer;
+
 #endif 

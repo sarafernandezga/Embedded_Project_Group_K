@@ -7,8 +7,21 @@
 
 #define I2C_NODE DT_NODELABEL(i2c2) 
 
+#define IMU_PERIOD_MS 20 // Pasar al .h ?? 
+
 // Definimos la cola de mensajes para el IMU (guarda el último mensaje disponible)
 K_MSGQ_DEFINE(imu_q, sizeof(struct imu_m), 1, 4);
+
+// Semáforo que el timer libera cada 20 ms 
+K_SEM_DEFINE(imu_sem, 0, 1);
+
+static void imu_sem_timer(struct k_timer *timer)
+{
+    ARG_UNUSED(timer);
+    k_sem_give(&imu_sem);
+}
+
+K_TIMER_DEFINE(imu_timer, imu_sem_timer, NULL);
 
 int IMU_initialization(const struct device *i2c_dev){
     if (!device_is_ready(i2c_dev)) {
@@ -127,6 +140,7 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
     struct imu_m mimu = {0};
     float dt = 0.02f; // 50 Hz = 20 ms
     uint8_t print_counter = 0; 
+    
 
     if (IMU_initialization(i2c_dev) < 0) {
         printk("Error al inicializar el MPU6050\n");
@@ -136,7 +150,10 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
         return;
     }
 
+    k_timer_start(&imu_timer, K_MSEC(IMU_PERIOD_MS), K_MSEC(IMU_PERIOD_MS));    
+
     while (1) {
+        k_sem_take(&imu_sem, K_FOREVER);
 
         if (IMU_read_and_process(i2c_dev, &mimu, dt) == 0) {
             // Imprimir cada 10 muestras (cada 200 ms) para no saturar la UART y perder los 50 Hz
@@ -154,7 +171,6 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
         k_msgq_purge(&imu_q);
         k_msgq_put(&imu_q, &mimu, K_NO_WAIT);
 
-        k_msleep(20);
     }
 }
 
