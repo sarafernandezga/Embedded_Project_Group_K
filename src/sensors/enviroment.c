@@ -302,6 +302,7 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
         };
 
         /* Send message with data and status */
+        k_msgq_purge(&env_q);
         ret_queue = k_msgq_put(&env_q, &menv, K_NO_WAIT);
     }
 

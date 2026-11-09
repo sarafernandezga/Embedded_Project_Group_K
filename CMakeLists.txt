@@ -10,7 +10,9 @@ target_sources(app PRIVATE
     src/sensors/enviroment.c
     src/sensors/IMU.c
     src/sensors/gps.c
-    src/test/tests.c
+    src/states/tests.c
+    src/states/simu.c
+    src/states/normal.c
     src/inputs/button.c
     src/outputs/rgb.c
 )

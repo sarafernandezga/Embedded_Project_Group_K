@@ -520,7 +520,7 @@ static void my_thread_gps(void *p1, void *p2, void *p3)
 
     if (gps_init() != 0) {
         data.status = GPS_ERR_NO_DATA;
-        
+        k_msgq_purge(&gps_msgq);
         k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
         return;
     }
@@ -529,7 +529,7 @@ static void my_thread_gps(void *p1, void *p2, void *p3)
         /* Si en 5 s no llega nada, hay un problema físico */
         if ((sem_ret = k_sem_take(&gps_sem, K_SECONDS(3))) != 0) {
             data.status = GPS_ERR_NO_DATA;
-             
+            k_msgq_purge(&gps_msgq);
             k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
             continue;
         }
@@ -537,7 +537,7 @@ static void my_thread_gps(void *p1, void *p2, void *p3)
 
         /* Procesar TODO lo que haya (while, no if) */
         while ((gps_get_data(&data)) != 0){
-             
+            k_msgq_purge(&gps_msgq);
             k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
         }
 
