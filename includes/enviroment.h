@@ -28,8 +28,6 @@ enum env_status {
     SI7021_FAIL,
     TEMP_FAIL,
     MULTIPLE_FAIL,
-    ADC_INIT_FAIL,
-    SI7021_INIT_FAIL
 };
 
 /* Struct ADC Message */

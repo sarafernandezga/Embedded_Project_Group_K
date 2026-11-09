@@ -71,7 +71,7 @@ int main(void)
 
         /* Wait for an event: button or timer */
         uint32_t ev = k_event_wait(&main_events,
-                                   EVT_BUTTON | EVT_TIMER,
+                                   EVT_BUTTON | EVT_TIMER | EVT_DRONE,
                                    false,
                                    K_FOREVER);
 
@@ -85,6 +85,9 @@ int main(void)
                 case TEST_MODE:
                     /* Change Mode*/
                     op_mode = NORMAL_MODE;
+
+                    /* Initialize RGB */
+                    change_drone_mode(&data_sensors);
 
                     /* Initialize timers for this mode */
                     gps_set_update_rate(1000);
@@ -114,6 +117,9 @@ int main(void)
                     /* Change Mode*/
                     op_mode = TEST_MODE;
 
+                    /* Initialize RGB */
+                    set_rgb_color(BLUE_LED);
+
                     /* Initialize timers for this mode */
                     gps_set_update_rate(2000);
                     k_timer_start(&enviroment_timer, K_NO_WAIT, K_SECONDS(2));
@@ -139,6 +145,15 @@ int main(void)
                 case SIMU_MODE:   run_simu_mode(&data_sensors);   break;
                 default: break;
             }
+        }
+
+        /* Timer: read the queues and run the current mode */
+        if (ev & EVT_TIMER) {
+            if (op_mode == NORMAL_MODE){
+                queue_update(&data_sensors);
+                change_drone_mode(&data_sensors);
+            }
+            
         }
     }
 }

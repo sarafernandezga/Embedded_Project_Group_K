@@ -4,6 +4,7 @@
 #include <zephyr/sys/printk.h>
 #include <math.h> // mirar si queremos meterlo o si realmente no 
 #include "imu.h"
+#include "main.h"
 
 #define I2C_NODE DT_NODELABEL(i2c2) 
 
@@ -130,6 +131,21 @@ int IMU_read_and_process(const struct device *i2c_dev, struct imu_m *mimu, float
     return 0;
 }
 
+
+/* Publishes the latest IMU message and wakes main only when the
+ * tracker state changes (IDLE <-> FLYING <-> PROBLEM) */
+static void imu_change_mode(struct imu_m *mimu)
+{
+    static enum drone_state last_state = IDLE;
+
+    if (mimu->state != last_state) {
+        last_state = mimu->state;
+        k_event_post(&main_events, EVT_DRONE);
+    }
+}
+
+
+
 void IMU_measurement(void *p1, void *p2, void *p3) {
     const struct device *i2c_dev = DEVICE_DT_GET(I2C_NODE);
 
@@ -160,6 +176,8 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
 
         k_msgq_purge(&imu_q);
         k_msgq_put(&imu_q, &mimu, K_NO_WAIT);
+
+        imu_change_mode(&mimu);
 
     }
 }

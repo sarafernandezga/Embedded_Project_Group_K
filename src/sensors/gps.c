@@ -505,6 +505,23 @@ static int gps_get_data(struct gps_data *gps_data)
     return 0;
 }
 
+/* Publica un mensaje del GPS (dato o error) en un solo sitio */
+static void gps_publish(struct gps_data *data)
+{
+    static bool last_fault = false;
+    bool fault = (data->status != GPS_OK && data->status != GPS_NO_FIX);
+
+    k_msgq_purge(&gps_msgq);
+    k_msgq_put(&gps_msgq, data, K_NO_WAIT);
+
+    /* Notify only on the transition healthy -> faulty */
+    if (fault && !last_fault) {
+        k_event_post(&main_events, EVT_DRONE);
+    }
+    
+    last_fault = fault;
+}
+
 // ============================================================
 // Thread GPS
 // ============================================================
@@ -516,32 +533,25 @@ static int gps_get_data(struct gps_data *gps_data)
 static void my_thread_gps(void *p1, void *p2, void *p3)
 {
     struct gps_data data;
-    int sem_ret;
 
     if (gps_init() != 0) {
         data.status = GPS_ERR_NO_DATA;
-        k_msgq_purge(&gps_msgq);
-        k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
+        gps_publish(&data);
         return;
     }
 
     while (1) {
-        /* Si en 5 s no llega nada, hay un problema físico */
-        if ((sem_ret = k_sem_take(&gps_sem, K_SECONDS(3))) != 0) {
+        if (k_sem_take(&gps_sem, K_SECONDS(3)) != 0) {
             data.status = GPS_ERR_NO_DATA;
-            k_msgq_purge(&gps_msgq);
-            k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
+            gps_publish(&data);
             continue;
         }
 
-
-        /* Procesar TODO lo que haya (while, no if) */
-        while ((gps_get_data(&data)) != 0){
-            k_msgq_purge(&gps_msgq);
-            k_msgq_put(&gps_msgq, &data, K_NO_WAIT);
+        while (gps_get_data(&data) != 0) {
+            gps_publish(&data);
         }
-
     }
+
 }
 
 /* Start gps thread automatically at boot */

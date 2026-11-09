@@ -24,4 +24,6 @@ void run_test_mode(struct system_messages *data_sensors);
 void run_simu_mode(struct system_messages *data_sensors);
 void run_normal_mode(struct system_messages *data_sensors);
 
+void change_drone_mode(struct system_messages *data_sensors);
+
 #endif

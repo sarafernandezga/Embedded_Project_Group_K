@@ -42,14 +42,6 @@ void test_enviroment(void){
         case MULTIPLE_FAIL:
             printk("Multiples sensores o medidas fallidas\n");
             break;
-
-        case ADC_INIT_FAIL:
-            printk("ERROR CRITICO: no se pudo inicializar el ADC\n");
-            break;
-
-        case SI7021_INIT_FAIL:
-            printk("ERROR CRITICO: no se pudo inicializar el Si7021/I2C\n");
-            break;
         }
     }
 

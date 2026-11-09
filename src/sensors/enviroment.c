@@ -213,99 +213,71 @@ static int measure_temperature(float *temperature)
     return 0;
 }
 
-// ============================================================
-// Thread
-// ============================================================
+/* Computes the status, publishes the message and notifies main only
+ * when the status changes (OK -> error or error -> OK) */
+static void env_publish(int ret_adc, int ret_hum, int ret_temp, struct env_m *data)
+{
+    static bool last_fault = false;
+    bool fault = (data->status != ALL_OK);
+
+    if (ret_adc < 0 && ret_hum < 0) {
+        data->status = MULTIPLE_FAIL;
+    } else if (ret_hum < 0) {
+        data->status = SI7021_FAIL;
+    } else if (ret_temp < 0) {
+        data->status = TEMP_FAIL;
+    } else if (ret_adc < 0) {
+        data->status = LIGHT_FAIL;
+    } else {
+        data->status = ALL_OK;
+    }
+
+    /* Keep only the latest message (put first, then notify) */
+    k_msgq_purge(&env_q);
+    k_msgq_put(&env_q, data, K_NO_WAIT);
+
+    /* Wake main only when the sensor goes healthy -> faulty or back */
+    if (fault != last_fault) {
+        last_fault = fault;
+        k_event_post(&main_events, EVT_DRONE);
+    }
+}
+
+
+
 void my_thread_enviroment(void *p1, void *p2, void *p3)
 {
     ARG_UNUSED(p1);
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
 
-    /* Data variables */
-    float light = 0.0f;
-    float humidity = 0.0f;
-    float temperature = 0.0f;
-
-    /* Error variables */
-    int ret_ADC;
-    int ret_si7021;
-    int ret_temp;
-    int ret_queue;
-
-    /* Status variables */
-    enum env_status env_status = ALL_OK;
-
-    /* ADC struct */
     struct adc_sequence sequence = {
         .buffer = &sample,
         .buffer_size = sizeof(sample),
     };
 
+    int init_adc = initialize_adc(&sequence);
+    int init_hum = initialize_Si7021();
 
-    /* Initialize ADC */
-    ret_ADC = initialize_adc(&sequence);
+    /* Init failed: report the error once and stop the thread */
+    if (init_adc < 0 || init_hum < 0) {
+        struct env_m menv = {0};
 
-    if (ret_ADC < 0) { env_status = ADC_INIT_FAIL; }
-
-    /* Initialize Si7021 */
-    ret_si7021 = initialize_Si7021();
-
-    if (ret_si7021 < 0) {
-        env_status = (env_status == ADC_INIT_FAIL)
-                ? MULTIPLE_FAIL
-                : SI7021_INIT_FAIL;
+        env_publish(init_adc, init_hum, init_hum, &menv);
+        return;
     }
 
     while (1) {
-        /* Wait for an instruction to measure */
         k_sem_take(&sem_env_gate, K_FOREVER);
 
-        /* Reset values before each measurement */
-        light = 0.0f;
-        humidity = 0.0f;
-        temperature = 0.0f;
+        struct env_m menv = {0};   /* failed values stay at 0 */
 
-        /* Read light */
-        ret_ADC = take_LDC_measure(&sequence, &light);
+        int ret_adc  = take_LDC_measure(&sequence, &menv.light);
+        int ret_hum  = measure_humidity(&menv.hum);
+        int ret_temp = (ret_hum == 0) ? measure_temperature(&menv.temp) : ret_hum;
 
-        /* Read humidity */
-        ret_si7021 = measure_humidity(&humidity);
-
-        /* Read associated temperature only if humidity succeeded */
-        if (ret_si7021 == 0) {
-            ret_temp = measure_temperature(&temperature);
-
-        } else {
-            ret_temp = ret_si7021;
-        }
-
-        /* Determine measurement status */
-        if (ret_ADC < 0 && ret_si7021 < 0) {
-            env_status = MULTIPLE_FAIL;
-        } else if (ret_si7021 < 0) {
-            env_status = SI7021_FAIL;
-        } else if (ret_temp < 0) {
-            env_status = TEMP_FAIL;
-        } else if (ret_ADC < 0) {
-            env_status = LIGHT_FAIL;
-        } else {
-            env_status = ALL_OK;
-        }
-
-        /* Construct message */
-        struct env_m menv = {
-            .temp = temperature,
-            .hum = humidity,
-            .light = light,
-            .status = env_status
-        };
-
-        /* Send message with data and status */
-        k_msgq_purge(&env_q);
-        ret_queue = k_msgq_put(&env_q, &menv, K_NO_WAIT);
+        env_publish(ret_adc, ret_hum, ret_temp, &menv);
     }
-
 }
 
 /* Start enviroment thread */
