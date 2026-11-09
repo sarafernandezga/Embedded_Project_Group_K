@@ -4,11 +4,8 @@
 #include <zephyr/sys/printk.h>
 #include <math.h> // mirar si queremos meterlo o si realmente no 
 #include "imu.h"
-#include "main.h"
 
 #define I2C_NODE DT_NODELABEL(i2c2) 
-
-#define IMU_PERIOD_MS 20 // Pasar al .h ?? 
 
 // Definimos la cola de mensajes para el IMU (guarda el último mensaje disponible)
 K_MSGQ_DEFINE(imu_q, sizeof(struct imu_m), 1, 4);
@@ -106,8 +103,7 @@ int IMU_read_and_process(const struct device *i2c_dev, struct imu_m *mimu, float
     // Conversiones físicas coherentes con +-4g (8192 LSB/g) y +-500 deg/s (65.5 LSB/deg/s)
     float ax = (raw_ax / 8192.0f) * 9.81f;
     float ay = (raw_ay / 8192.0f) * 9.81f;
-    float az = (raw_az / 8192.0f) * 9.81f; // quitar ?? 
-    float az_sin_g = az - 9.81f;
+    float az = (raw_az / 8192.0f) * 9.81f; 
 
     float gx = raw_gx / 65.5f;
     float gy = raw_gy / 65.5f;
@@ -115,7 +111,7 @@ int IMU_read_and_process(const struct device *i2c_dev, struct imu_m *mimu, float
 
     mimu->vx += ax * dt;
     mimu->vy += ay * dt;
-    mimu->vz += az_sin_g * dt;
+    mimu->vz += az * dt;
 
     mimu->x += mimu->vx * dt;
     mimu->y += mimu->vy * dt;
@@ -139,37 +135,28 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
 
     // Variables globales para los ángulos (asumiendo inicio en 0)
     struct imu_m mimu = {0};
-    float dt = 0.02f; // 50 Hz = 20 ms
-    uint8_t print_counter = 0; 
+    int64_t last_t = k_uptime_get();  // esta logica se puede cambiar por funciones de estado que cambien tambien la frecuencia una variable
     
 
     if (IMU_initialization(i2c_dev) < 0) {
         printk("Error al inicializar el MPU6050\n");
         mimu.status = -1;
-        mimu.state = PROBLEM;
+        // mimu.state = PROBLEM;
         k_msgq_put(&imu_q, &mimu, K_NO_WAIT);
         return;
     }
 
-    //k_timer_start(&imu_timer, K_MSEC(IMU_PERIOD_MS), K_MSEC(IMU_PERIOD_MS));    
-
     while (1) {
         k_sem_take(&imu_sem, K_FOREVER);
+        int64_t now = k_uptime_get();
+        float dt = (now - last_t) / 1000.0f;
+        last_t = now;
 
         if (IMU_read_and_process(i2c_dev, &mimu, dt) == 0) {
-            // Imprimir cada 10 muestras (cada 200 ms) para no saturar la UART y perder los 50 Hz
-            if (++print_counter >= 10) {
-                print_counter = 0;
-                /*printk("ACC [m/s2]: X=%.2f Y=%.2f Z=%.2f | GYR [deg/s]: X=%.1f Y=%.1f Z=%.1f | ANG [deg]: R=%.1f P=%.1f Y=%.1f\n",
-                       (double)mimu.ax, (double)mimu.ay, (double)mimu.az,
-                       (double)mimu.gx, (double)mimu.gy, (double)mimu.gz,
-                       (double)mimu.roll, (double)mimu.pitch, (double)mimu.yaw);*/
-            }
+            mimu.status=0;
         } else {
-            //printk("Error en lectura burst I2C\n");
+            mimu.status=-2;
         }
-
-        
 
         k_msgq_purge(&imu_q);
         k_msgq_put(&imu_q, &mimu, K_NO_WAIT);
