@@ -19,7 +19,7 @@ static void button_isr(const struct device *port,
     ARG_UNUSED(pins);
 
     /* Notifies the thread when the button state changes */
-    k_event_post(&app_events, EVT_BUTTON);
+    k_event_post(&main_events, EVT_BUTTON);
     
 }
 

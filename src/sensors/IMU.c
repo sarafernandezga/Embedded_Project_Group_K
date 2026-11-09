@@ -4,6 +4,7 @@
 #include <zephyr/sys/printk.h>
 #include <math.h> // mirar si queremos meterlo o si realmente no 
 #include "imu.h"
+#include "main.h"
 
 #define I2C_NODE DT_NODELABEL(i2c2) 
 
@@ -150,7 +151,7 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
         return;
     }
 
-    k_timer_start(&imu_timer, K_MSEC(IMU_PERIOD_MS), K_MSEC(IMU_PERIOD_MS));    
+    //k_timer_start(&imu_timer, K_MSEC(IMU_PERIOD_MS), K_MSEC(IMU_PERIOD_MS));    
 
     while (1) {
         k_sem_take(&imu_sem, K_FOREVER);
@@ -167,6 +168,8 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
         } else {
             //printk("Error en lectura burst I2C\n");
         }
+
+        
 
         k_msgq_purge(&imu_q);
         k_msgq_put(&imu_q, &mimu, K_NO_WAIT);

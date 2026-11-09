@@ -3,6 +3,7 @@
 
 #include "includes.h"
 #include "enviroment.h"
+#include "main.h"
 
 /* ------ ADC ------*/
 #define ADC_NODE DT_PATH(zephyr_user)
@@ -17,6 +18,16 @@ static const struct device *i2c = DEVICE_DT_GET(I2C_NODE);
 /* ----- Thread ----- */
 K_SEM_DEFINE(sem_env_gate, 0, 1);                    // Semaphore definition
 K_MSGQ_DEFINE(env_q, sizeof(struct env_m), 1, 4);    // Message queue definition
+
+static void enviroment_timer_handler(struct k_timer *timer)
+{
+    ARG_UNUSED(timer);
+
+    k_sem_give(&sem_env_gate);
+}
+
+K_TIMER_DEFINE(enviroment_timer, enviroment_timer_handler, NULL);
+
 
 // ============================================================
 // Light monitoring (LDC)
@@ -292,7 +303,6 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
 
         /* Send message with data and status */
         ret_queue = k_msgq_put(&env_q, &menv, K_NO_WAIT);
-
     }
 
 }

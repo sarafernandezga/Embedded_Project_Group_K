@@ -46,4 +46,6 @@ extern struct k_msgq env_q;
 /* Semaphore ID */
 extern struct k_sem sem_env_gate;
 
+extern struct k_timer enviroment_timer;
+
 #endif

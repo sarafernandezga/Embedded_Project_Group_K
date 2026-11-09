@@ -1,7 +1,4 @@
 #include "includes.h"
-#include "enviroment.h"
-#include "gps.h"
-#include "IMU.h"
 #include "tests.h"
 
 void test_enviroment(void){
@@ -126,14 +123,6 @@ void test_IMU(void){
 
 // K_SEM_DEFINE(sem_main_gate, 0, 1);
 
-struct system_messages {
-    struct imu_m    imu;
-    struct gps_data gps;
-    struct env_m    env;
-    bool imu_valid;
-    bool gps_valid;
-    bool env_valid;
-};
 
 static struct system_messages g_state;
 
@@ -149,21 +138,23 @@ static const char *state_to_str(enum drone_state s)
 
 static void queue_update(void)
 {
-    struct imu_m    imu_tmp;
-    struct gps_data gps_tmp;
-    struct env_m    env_tmp;
 
-    if (k_msgq_get(&imu_q, &imu_tmp, K_NO_WAIT) == 0) {
-        g_state.imu = imu_tmp;
-        g_state.imu_valid = (imu_tmp.status == 0);
+    if (k_msgq_get(&imu_q, &g_state.imu, K_NO_WAIT) == 0) {
+        g_state.imu_valid = (g_state.imu.status == 0);
     }
-    if (k_msgq_get(&gps_msgq, &gps_tmp, K_NO_WAIT) == 0) {
-        g_state.gps = gps_tmp;
-        g_state.gps_valid = ((int)gps_tmp.status == (int)ALL_OK);
+    if (k_msgq_get(&gps_msgq, &g_state.gps, K_NO_WAIT) == 0) {
+        if(g_state.gps.status == GPS_OK){
+            g_state.gps_valid = 1;
+
+        } else if (g_state.gps.status == GPS_NO_FIX){
+            g_state.gps_valid = 0;
+
+        } else{
+            g_state.gps_valid = -1;
+        }
     }
-    if (k_msgq_get(&env_q, &env_tmp, K_NO_WAIT) == 0) {
-        g_state.env = env_tmp;
-        g_state.env_valid = ((int)env_tmp.status == (int)ALL_OK);
+    if (k_msgq_get(&env_q, &g_state.env, K_NO_WAIT) == 0) {
+        g_state.env_valid = (g_state.env.status == ALL_OK);
     }
 }
 
@@ -171,13 +162,18 @@ static void print_test_report(void)
 {
     printk("MODE: TEST\n");
 
-    if (g_state.gps_valid) {
+    if (g_state.gps_valid == 1) {
         printk("GPS: fix=%u sats=%02u lat=%.6f lon=%.6f alt=%.1f m time=%s\n",
                (unsigned)g_state.gps.fix_quality, (unsigned)g_state.gps.satellites,
                (double)g_state.gps.latitude, (double)g_state.gps.longitude,
                (double)g_state.gps.altitude, g_state.gps.utc_time);
-    } else {
-        printk("GPS: sin fix\n");
+
+    } else if (g_state.gps_valid == 0) {
+        printk("GPS: no fix, datos no validos\n");
+
+    } else{
+        printk("GPS: error \n");
+
     }
 
     if (g_state.imu_valid) {
@@ -202,10 +198,105 @@ static void print_test_report(void)
     printk("STATUS: %s\n\n", state_to_str(g_state.imu.state));
 }
 
+
+
+
+static void print_normal_report(void)
+{
+    printk("MODE: NORMAL\n");
+
+    if (g_state.gps_valid == 1) {
+        printk("GPS: fix=%u sats=%02u lat=%.6f lon=%.6f alt=%.1f m time=%s\n",
+               (unsigned)g_state.gps.fix_quality, (unsigned)g_state.gps.satellites,
+               (double)g_state.gps.latitude, (double)g_state.gps.longitude,
+               (double)g_state.gps.altitude, g_state.gps.utc_time);
+
+    } else if (g_state.gps_valid == 0) {
+        printk("GPS: no fix, datos no validos\n");
+
+    } else{
+        printk("GPS: error \n");
+
+    }
+
+    if (g_state.imu_valid) {
+        printk("IMU: ax=%.2f ay=%.2f az=%.2f m/s2 | gx=%.1f gy=%.1f gz=%.1f deg/s\n",
+               (double)g_state.imu.ax, (double)g_state.imu.ay, (double)g_state.imu.az,
+               (double)g_state.imu.gx, (double)g_state.imu.gy, (double)g_state.imu.gz);
+        printk("ATT: roll=%.2f pitch=%.2f yaw=%.2f deg\n",
+               (double)g_state.imu.roll, (double)g_state.imu.pitch, (double)g_state.imu.yaw);
+    } else {
+        printk("IMU: error\n");
+    }
+
+    if (g_state.env_valid) {
+        printk("LIGHT: %.1f %% | ENV: temp=%.1f C hum=%.1f %%\n",
+               (double)g_state.env.light,
+               (double)g_state.env.temp,
+               (double)g_state.env.hum);
+    } else {
+        printk("ENV: error\n");
+    }
+
+    printk("STATUS: %s\n\n", state_to_str(g_state.imu.state));
+}
+
+
+static void print_simu_report(void)
+{
+    printk("MODE: SIMU\n");
+
+    if (g_state.gps_valid == 1) {
+        printk("GPS: fix=%u sats=%02u lat=%.6f lon=%.6f alt=%.1f m time=%s\n",
+               (unsigned)g_state.gps.fix_quality, (unsigned)g_state.gps.satellites,
+               (double)g_state.gps.latitude, (double)g_state.gps.longitude,
+               (double)g_state.gps.altitude, g_state.gps.utc_time);
+
+    } else if (g_state.gps_valid == 0) {
+        printk("GPS: no fix, datos no validos\n");
+
+    } else{
+        printk("GPS: error \n");
+
+    }
+
+    if (g_state.imu_valid) {
+        printk("IMU: ax=%.2f ay=%.2f az=%.2f m/s2 | gx=%.1f gy=%.1f gz=%.1f deg/s\n",
+               (double)g_state.imu.ax, (double)g_state.imu.ay, (double)g_state.imu.az,
+               (double)g_state.imu.gx, (double)g_state.imu.gy, (double)g_state.imu.gz);
+        printk("ATT: roll=%.2f pitch=%.2f yaw=%.2f deg\n",
+               (double)g_state.imu.roll, (double)g_state.imu.pitch, (double)g_state.imu.yaw);
+    } else {
+        printk("IMU: error\n");
+    }
+
+    if (g_state.env_valid) {
+        printk("LIGHT: %.1f %% | ENV: temp=%.1f C hum=%.1f %%\n",
+               (double)g_state.env.light,
+               (double)g_state.env.temp,
+               (double)g_state.env.hum);
+    } else {
+        printk("ENV: error\n");
+    }
+
+    printk("STATUS: %s\n\n", state_to_str(g_state.imu.state));
+}
+
+
 void run_test_mode(void)
 {
-    k_sem_give(&sem_env_gate);
-    k_msleep(30);
     queue_update();
     print_test_report();
+}
+
+void run_normal_mode(void)
+{
+    queue_update();
+    print_normal_report();
+}
+
+void run_simu_mode(void)
+{
+    queue_update();
+    print_simu_report();
 }
