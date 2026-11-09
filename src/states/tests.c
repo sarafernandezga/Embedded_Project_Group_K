@@ -122,15 +122,24 @@ void test_IMU(void){
 // TEST MODE
 // ============================================================
 /* Converts the tracker state to text so it can be printed */
-static const char *state_to_str(enum drone_state s)
+static const char *state_to_str(struct system_messages *data_sensors)
 {
-    switch (s) {
-    case IDLE:    return "IDLE";
-    case FLYING:  return "FLYING";
-    case PROBLEM: return "PROBLEM";
-    default:      return "UNKNOWN";
+    /* PROBLEM has priority over everything (NM5).
+     * GPS_NO_FIX is not a fault (gps_valid == 0), only gps_valid < 0 is. */
+    bool problem = !data_sensors->env_valid ||
+                   !data_sensors->imu_valid ||
+                   (data_sensors->gps_valid < 0) ||
+                   (data_sensors->imu.state == PROBLEM);
+
+    if (problem) {
+        return "PROBLEM";
+    } else if (data_sensors->imu.state == FLYING) {
+        return "FLYING";
     }
+    
+    return "IDLE";
 }
+
 
 /* Prints the TEST mode report with the latest data of each sensor.
  * It only reads the structure, it does not modify it. */
@@ -174,7 +183,7 @@ void run_test_mode(struct system_messages *data_sensors)
     }
 
     /* The state (IDLE/FLYING/PROBLEM) is computed by the IMU thread */
-    printk("STATUS: %s\n\n", state_to_str(data_sensors->imu.state));
+    printk("STATUS: %s\n\n", state_to_str(data_sensors));
 }
 
 
