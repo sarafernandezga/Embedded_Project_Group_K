@@ -26,8 +26,8 @@ static const char *state_to_str(struct system_messages *data_sensors)
 }
 
 /* Prints the NORMAL mode report (every 5 s) with the latest data of each sensor */
-void run_normal_mode(struct system_messages *data_sensors)
-{
+static void basic_report(struct system_messages *data_sensors){
+
     /* GPS: only print the position if there is a fix */
     if (data_sensors->gps_valid == 1) {
         printk("GPS: fix=%u sats=%02u lat=%+010.6f lon=%+011.6f alt=%+08.1f m time=%s\n",
@@ -62,6 +62,26 @@ void run_normal_mode(struct system_messages *data_sensors)
     }
 
     printk("STATUS: %s\n\n", state_to_str(data_sensors));
+
+}
+
+/* Prints the NORMAL mode report (every 30 s) with medium, maximum and minimum of each sensor */
+static void complete_report(struct system_messages *data_sensors){
+    printk("Implement report 30s");
+
+}
+
+
+void run_normal_mode(struct system_messages *data_sensors)
+{
+    static uint8_t report_count = 0;
+
+    basic_report(data_sensors);
+
+    if (++report_count >= 6) {            /* 6 x 5 s = 30 s */
+        complete_report(data_sensors);    /* prints mean / max / min */
+        report_count = 0;
+    }
 }
 
 
