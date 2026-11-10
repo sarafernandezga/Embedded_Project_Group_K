@@ -149,24 +149,23 @@ void run_test_mode(struct system_messages *data_sensors)
 
     /* gps_valid: 1 = fix, 0 = no fix, -1 = error */
     if (data_sensors->gps_valid == 1) {
-        printk("GPS: fix=%u sats=%02u lat=%.6f lon=%.6f alt=%.1f m time=%s\n",
+        printk("GPS: fix=%u sats=%02u lat=%+010.6f lon=%+011.6f alt=%+08.1f m time=%s\n",
                (unsigned)data_sensors->gps.fix_quality, (unsigned)data_sensors->gps.satellites,
                (double)data_sensors->gps.latitude, (double)data_sensors->gps.longitude,
                (double)data_sensors->gps.altitude, data_sensors->gps.utc_time);
-
     } else if (data_sensors->gps_valid == 0) {
-        printk("GPS: no fix, invalid data\n");
-
+        printk("GPS: no fix\n");
     } else {
         printk("GPS: error\n");
     }
 
     /* IMU: acceleration, angular velocity and integrated angles */
     if (data_sensors->imu_valid) {
-        printk("IMU: ax=%.2f ay=%.2f az=%.2f m/s2 | gx=%.1f gy=%.1f gz=%.1f deg/s\n",
-               (double)data_sensors->imu.ax, (double)data_sensors->imu.ay, (double)data_sensors->imu.az,
+        printk("IMU: ax=%+07.2f m/s2 ay=%+07.2f m/s2 az=%+07.2f m/s2\n",
+               (double)data_sensors->imu.ax, (double)data_sensors->imu.ay, (double)data_sensors->imu.az);
+        printk("IMU: gx=%+07.1f deg/s gy=%+07.1f deg/s gz=%+07.1f deg/s\n",
                (double)data_sensors->imu.gx, (double)data_sensors->imu.gy, (double)data_sensors->imu.gz);
-        printk("ATT: roll=%.2f pitch=%.2f yaw=%.2f deg\n",
+        printk("ATT: roll=%+07.2f deg pitch=%+07.2f deg yaw=%+07.2f deg\n",
                (double)data_sensors->imu.roll, (double)data_sensors->imu.pitch, (double)data_sensors->imu.yaw);
     } else {
         printk("IMU: error\n");
@@ -174,10 +173,9 @@ void run_test_mode(struct system_messages *data_sensors)
 
     /* Light (LDR) and temperature/humidity sensor */
     if (data_sensors->env_valid) {
-        printk("LIGHT: %.1f %% | ENV: temp=%.1f C hum=%.1f %%\n",
-               (double)data_sensors->env.light,
-               (double)data_sensors->env.temp,
-               (double)data_sensors->env.hum);
+        printk("LIGHT: %05.1f %%\n", (double)data_sensors->env.light);
+        printk("ENV: temp=%+06.1f C hum=%05.1f %%\n",
+               (double)data_sensors->env.temp, (double)data_sensors->env.hum);
     } else {
         printk("ENV: error\n");
     }
@@ -185,6 +183,5 @@ void run_test_mode(struct system_messages *data_sensors)
     /* The state (IDLE/FLYING/PROBLEM) is computed by the IMU thread */
     printk("STATUS: %s\n\n", state_to_str(data_sensors));
 }
-
 
 

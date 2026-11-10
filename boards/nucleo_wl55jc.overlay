@@ -27,7 +27,7 @@
         rgbgreen = &rgb_green;
         rgbblue = &rgb_blue;
 
-        userbt = &user_button_2; //sw2 
+        userbt = &user_button_1; //B1 (PA0)
 
         si7021 = &i2c2;
 

@@ -3,14 +3,15 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/sys/printk.h>
 #include <math.h> // mirar si queremos meterlo o si realmente no 
-#include "imu.h"
+#include "IMU.h" // must be uppercase 
 #include "main.h"
+#include "statistics.h"
 
 #define I2C_NODE DT_NODELABEL(i2c2) 
 
 // Definimos la cola de mensajes para el IMU (guarda el último mensaje disponible)
 K_MSGQ_DEFINE(imu_q, sizeof(struct imu_m), 1, 4);
-
+K_MSGQ_DEFINE(imu_stats_q, sizeof(struct imu_stats), 1, 4);
 // Semáforo que el timer libera cada 20 ms 
 K_SEM_DEFINE(imu_sem, 0, 1);
 
@@ -87,7 +88,6 @@ int IMU_read_and_process(const struct device *i2c_dev, struct imu_m *mimu, float
 
     if (i2c_burst_read(i2c_dev, MPU6050_ADDR, MPU6050_ACCEL_XOUT_H_REG, buf, 14) != 0) {
         mimu->status = -1;
-        mimu->state = PROBLEM;
         return -EIO;
     }
 
@@ -149,18 +149,28 @@ static void imu_change_mode(struct imu_m *mimu)
 void IMU_measurement(void *p1, void *p2, void *p3) {
     const struct device *i2c_dev = DEVICE_DT_GET(I2C_NODE);
 
-    // Variables globales para los ángulos (asumiendo inicio en 0)
     struct imu_m mimu = {0};
-    int64_t last_t = k_uptime_get();  // esta logica se puede cambiar por funciones de estado que cambien tambien la frecuencia una variable
-    
+    uint8_t err_count = 0;
+    int64_t last_t;
 
-    if (IMU_initialization(i2c_dev) < 0) {
-        printk("Error al inicializar el MPU6050\n");
+    /* 30 s statistics of |acceleration| and |angular velocity| */
+    struct stat_acc acc_stat, gyr_stat;
+    int64_t window_start;
+    bool was_active = false;
+
+    stat_reset(&acc_stat);
+    stat_reset(&gyr_stat);
+
+    while (IMU_initialization(i2c_dev) < 0) {
         mimu.status = -1;
-        // mimu.state = PROBLEM;
+        mimu.state = PROBLEM;
+        k_msgq_purge(&imu_q);
         k_msgq_put(&imu_q, &mimu, K_NO_WAIT);
-        return;
+        imu_change_mode(&mimu);       /* tell main (red LED) */
+        k_sleep(K_SECONDS(2));
     }
+    last_t = k_uptime_get();          /* dt must not include the retries */
+    window_start = last_t;
 
     while (1) {
         k_sem_take(&imu_sem, K_FOREVER);
@@ -168,20 +178,53 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
         float dt = (now - last_t) / 1000.0f;
         last_t = now;
 
+        bool active = normal_active;
+
+        /* Just entered NORMAL mode: start a new 30 s window */
+        if (active && !was_active) {
+            stat_reset(&acc_stat);
+            stat_reset(&gyr_stat);
+            window_start = now;
+        }
+        was_active = active;
+
+        /* Close the 30 s window: publish the result and start again */
+        if (active && (now - window_start) >= STATS_WINDOW_MS) {
+            struct imu_stats out;
+
+            stat_result(&acc_stat, &out.acc);
+            stat_result(&gyr_stat, &out.gyr);
+            k_msgq_purge(&imu_stats_q);
+            k_msgq_put(&imu_stats_q, &out, K_NO_WAIT);
+
+            stat_reset(&acc_stat);
+            stat_reset(&gyr_stat);
+            window_start = now;
+        }
+
         if (IMU_read_and_process(i2c_dev, &mimu, dt) == 0) {
-            mimu.status=0;
+            err_count = 0;
+            mimu.status = 0;
+
+            if (active) {
+                stat_add(&acc_stat, sqrtf(mimu.ax*mimu.ax + mimu.ay*mimu.ay + mimu.az*mimu.az));
+                stat_add(&gyr_stat, sqrtf(mimu.gx*mimu.gx + mimu.gy*mimu.gy + mimu.gz*mimu.gz));
+            }
         } else {
-            mimu.status=-2;
+            if (err_count < IMU_ERR_LIMIT) { err_count++; }
+            if (err_count < IMU_ERR_LIMIT) {
+                continue;             /* isolated error: keep the last data */
+            }
+            mimu.status = -1;         /* 5 failures in a row: PROBLEM */
+            mimu.state = PROBLEM;
         }
 
         k_msgq_purge(&imu_q);
         k_msgq_put(&imu_q, &mimu, K_NO_WAIT);
 
         imu_change_mode(&mimu);
-
     }
 }
-
 /* Start enviroment thread */
 K_THREAD_DEFINE(
     IMU_measurement_id,    /* Thread identifier */

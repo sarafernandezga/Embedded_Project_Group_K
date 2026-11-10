@@ -13,6 +13,8 @@
 #define GPS_UART_NODE DT_NODELABEL(usart1)
 static const struct device *gps_uart = DEVICE_DT_GET(GPS_UART_NODE);
 
+static volatile bool gps_ready = false;
+
 /* GPS Semaphore */
 K_SEM_DEFINE(gps_sem, 0, 1);
 
@@ -110,6 +112,10 @@ static void gps_send_command(const char *command)
  */
 void gps_set_update_rate(uint16_t interval_ms)
 {
+    if (!gps_ready) {
+        return;
+    }
+
     char command[32];
     char payload[20];
     uint8_t checksum = 0;
@@ -168,6 +174,7 @@ static int gps_uart_init(void)
     k_sleep(K_MSEC(100));
 
     /* Set GPS update rate 0.5 Hz */
+    gps_ready = true;
     gps_set_update_rate(2000);
 
     return 0;
@@ -318,6 +325,7 @@ static int gps_process_fields(char *fields[], int field_count,
 
     /* Start clean so no stale values from a previous sentence remain */
     memset(data_out, 0, sizeof(*data_out));
+    data_out->status = GPS_NO_FIX;
 
     /* Extract UTC time (field 1: hhmmss.sss) and format it as HH:MM:SS */
     if (field_count > 1 && fields[1][0] != '\0') {
@@ -498,6 +506,10 @@ static int gps_get_data(struct gps_data *gps_data)
             gps_data->status = GPS_ERR_NO_DATA;
             return -1;
         }
+
+        if (ret == 0) {
+            continue;          /* not a GGA sentence: ignore it */
+        }
         
         return 1;
     }
@@ -532,7 +544,7 @@ static void gps_publish(struct gps_data *data)
  */
 static void my_thread_gps(void *p1, void *p2, void *p3)
 {
-    struct gps_data data;
+    struct gps_data data = {0}; // must be initialized
 
     if (gps_init() != 0) {
         data.status = GPS_ERR_NO_DATA;

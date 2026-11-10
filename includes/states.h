@@ -1,7 +1,7 @@
 #ifndef STATES_H
 #define STATES_H
 
-#include "imu.h"            /* struct imu_m, enum drone_state */
+#include "IMU.h"            /* struct imu_m, enum drone_state */
 #include "gps.h"            /* struct gps_data */
 #include "enviroment.h"     /* struct env_m */
 
@@ -25,5 +25,8 @@ void run_simu_mode(struct system_messages *data_sensors);
 void run_normal_mode(struct system_messages *data_sensors);
 
 void change_drone_mode(struct system_messages *data_sensors);
+
+void normal_enter(void);                              /* restart 30 s window */
+void normal_exit(void); // para salir hay que apagar la flag 
 
 #endif

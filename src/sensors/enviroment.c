@@ -4,6 +4,7 @@
 #include "includes.h"
 #include "enviroment.h"
 #include "main.h"
+#include "statistics.h"
 
 /* ------ ADC ------*/
 #define ADC_NODE DT_PATH(zephyr_user)
@@ -18,6 +19,7 @@ static const struct device *i2c = DEVICE_DT_GET(I2C_NODE);
 /* ----- Thread ----- */
 K_SEM_DEFINE(sem_env_gate, 0, 1);                    // Semaphore definition
 K_MSGQ_DEFINE(env_q, sizeof(struct env_m), 1, 4);    // Message queue definition
+K_MSGQ_DEFINE(env_stats_q, sizeof(struct env_stats), 1, 4); // Statistics for normal mode
 
 static void enviroment_timer_handler(struct k_timer *timer)
 {
@@ -256,6 +258,15 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
         .buffer_size = sizeof(sample),
     };
 
+    /* 30 s statistics */
+    struct stat_acc light_stat, temp_stat, hum_stat;
+    int64_t window_start = k_uptime_get();
+    bool was_active = false;
+
+    stat_reset(&light_stat);
+    stat_reset(&temp_stat);
+    stat_reset(&hum_stat);
+
     int init_adc = initialize_adc(&sequence);
     int init_hum = initialize_Si7021();
 
@@ -277,13 +288,47 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
         int ret_temp = (ret_hum == 0) ? measure_temperature(&menv.temp) : ret_hum;
 
         env_publish(ret_adc, ret_hum, ret_temp, &menv);
+        int64_t now = k_uptime_get();
+        bool active = normal_active;
+
+        /* Just entered NORMAL mode: start a new 30 s window */
+        if (active && !was_active) {
+            stat_reset(&light_stat);
+            stat_reset(&temp_stat);
+            stat_reset(&hum_stat);
+            window_start = now;
+        }
+        was_active = active;
+
+        if (active) {
+            /* Only good readings go into the statistics */
+            if (ret_adc == 0)  { stat_add(&light_stat, menv.light); }
+            if (ret_hum == 0)  { stat_add(&hum_stat,   menv.hum);   }
+            if (ret_temp == 0) { stat_add(&temp_stat,  menv.temp);  }
+
+            /* Close the 30 s window: publish the result and start again */
+            if ((now - window_start) >= STATS_WINDOW_MS) {
+                struct env_stats out;
+
+                stat_result(&light_stat, &out.light);
+                stat_result(&temp_stat,  &out.temp);
+                stat_result(&hum_stat,   &out.hum);
+                k_msgq_purge(&env_stats_q);
+                k_msgq_put(&env_stats_q, &out, K_NO_WAIT);
+
+                stat_reset(&light_stat);
+                stat_reset(&temp_stat);
+                stat_reset(&hum_stat);
+                window_start = now;
+            }
+        }
     }
 }
 
 /* Start enviroment thread */
 K_THREAD_DEFINE(
     my_thread_enviroment_id,    /* Thread identifier */
-    512,                        /* Stack size */
+    1024,                        /* Stack size */
     my_thread_enviroment,       /* Entry function */
     NULL, NULL, NULL,           /* Parameters */
     4,                          /* Priority */

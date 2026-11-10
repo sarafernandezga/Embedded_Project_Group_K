@@ -1,32 +1,50 @@
 #include "includes.h"
 #include "states.h"
 #include "rgb.h"
-
+#include "statistics.h"
 
 // ============================================================
-// TEST MODE
+// Tracker state
 // ============================================================
-/* Converts the tracker state to text so it can be printed */
-static const char *state_to_str(struct system_messages *data_sensors)
+/* PROBLEM has priority over everything (NM5).
+ * GPS_NO_FIX is not a fault (gps_valid == 0), only gps_valid < 0 is. */
+static enum drone_state get_state(const struct system_messages *d)
 {
-    /* PROBLEM has priority over everything (NM5).
-     * GPS_NO_FIX is not a fault (gps_valid == 0), only gps_valid < 0 is. */
-    bool problem = !data_sensors->env_valid ||
-                   !data_sensors->imu_valid ||
-                   (data_sensors->gps_valid < 0) ||
-                   (data_sensors->imu.state == PROBLEM);
-
-    if (problem) {
-        return "PROBLEM";
-    } else if (data_sensors->imu.state == FLYING) {
-        return "FLYING";
+    if (!d->env_valid || !d->imu_valid ||
+        d->gps_valid < 0 || d->imu.state == PROBLEM) {
+        return PROBLEM;
     }
 
-    return "IDLE";
+    return d->imu.state;      /* IDLE or FLYING */
 }
 
+static const char *state_str(enum drone_state s)
+{
+    switch (s) {
+    case IDLE:    return "IDLE";
+    case FLYING:  return "FLYING";
+    case PROBLEM: return "PROBLEM";
+    default:      return "UNKNOWN";
+    }
+}
+
+/* RGB: green = IDLE, yellow = FLYING, red = PROBLEM (NM6) */
+void change_drone_mode(struct system_messages *data_sensors)
+{
+    switch (get_state(data_sensors)) {
+        case PROBLEM: set_rgb_color(RED_LED);    break;
+        case FLYING:  set_rgb_color(YELLOW_LED); break;
+        default:      set_rgb_color(GREEN_LED);  break;
+    }
+}
+
+// ============================================================
+// Reports
+// ============================================================
 /* Prints the NORMAL mode report (every 5 s) with the latest data of each sensor */
 static void basic_report(struct system_messages *data_sensors){
+
+    printk("MODE: NORMAL\n");
 
     /* GPS: only print the position if there is a fix */
     if (data_sensors->gps_valid == 1) {
@@ -61,44 +79,65 @@ static void basic_report(struct system_messages *data_sensors){
         printk("ENV: error\n");
     }
 
-    printk("STATUS: %s\n\n", state_to_str(data_sensors));
-
+    printk("STATUS: %s\n\n", state_str(get_state(data_sensors)));
 }
 
-/* Prints the NORMAL mode report (every 30 s) with medium, maximum and minimum of each sensor */
-static void complete_report(struct system_messages *data_sensors){
-    printk("Implement report 30s");
+static void print_stat(const char *name, const char *unit, const struct stat_f *s)
+{
+    if (s->n == 0) {
+        printk("  %-6s: no data\n", name);
+        return;
+    }
 
+    printk("  %-6s: mean=%+8.2f max=%+8.2f min=%+8.2f %s\n",
+           name, (double)s->mean, (double)s->max, (double)s->min, unit);
 }
 
+/* Prints the 30 s statistics when a sensor thread has published a new window */
+static void stats_report(void)
+{
+    struct imu_stats imu_s;
+    struct env_stats env_s;
 
+    if (k_msgq_get(&imu_stats_q, &imu_s, K_NO_WAIT) == 0) {
+        printk("STATS IMU (last 30 s):\n");
+        print_stat("|ACC|",  "m/s2",  &imu_s.acc);
+        print_stat("|GYR|",  "deg/s", &imu_s.gyr);
+        printk("\n");
+    }
+
+    if (k_msgq_get(&env_stats_q, &env_s, K_NO_WAIT) == 0) {
+        printk("STATS ENV (last 30 s):\n");
+        print_stat("LIGHT", "%",  &env_s.light);
+        print_stat("TEMP",  "C",  &env_s.temp);
+        print_stat("HUM",   "%",  &env_s.hum);
+        printk("\n");
+    }
+}
+
+// ============================================================
+// Functions called by the FSM in main.c
+// ============================================================
+/* Called when NORMAL mode starts: drop old statistics from other modes */
+volatile bool normal_active = false;
+
+/* Called when NORMAL mode starts */
+void normal_enter(void)
+{
+    k_msgq_purge(&imu_stats_q);       /* drop old results */
+    k_msgq_purge(&env_stats_q);
+    normal_active = true;             /* sensor threads start a new window */
+}
+
+/* Called when NORMAL mode ends */
+void normal_exit(void)
+{
+    normal_active = false;
+}
+/* Called every 5 s */
 void run_normal_mode(struct system_messages *data_sensors)
 {
-    static uint8_t report_count = 0;
-
     basic_report(data_sensors);
-
-    if (++report_count >= 6) {            /* 6 x 5 s = 30 s */
-        complete_report(data_sensors);    /* prints mean / max / min */
-        report_count = 0;
-    }
-}
-
-
-void change_drone_mode(struct system_messages *data_sensors)
-{
-    /* PROBLEM has priority over everything (NM5).
-     * GPS_NO_FIX is not a fault (gps_valid == 0), only gps_valid < 0 is. */
-    bool problem = !data_sensors->env_valid ||
-                   !data_sensors->imu_valid ||
-                   (data_sensors->gps_valid < 0) ||
-                   (data_sensors->imu.state == PROBLEM);
-
-    if (problem) {
-        set_rgb_color(RED_LED);
-    } else if (data_sensors->imu.state == FLYING) {
-        set_rgb_color(YELLOW_LED);
-    } else {
-        set_rgb_color(GREEN_LED);
-    }
+    change_drone_mode(data_sensors);
+    stats_report();
 }
