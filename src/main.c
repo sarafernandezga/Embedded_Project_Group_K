@@ -10,6 +10,9 @@
 #include "IMU.h"
 #include "gps.h"
 
+/* At boot the sensor threads need a moment to publish their first sample */
+#define BOOT_SETTLE_MS 1200
+
 K_EVENT_DEFINE(main_events);
 
 /* Timer callback runs in ISR context, so it only notifies main */
@@ -35,7 +38,7 @@ struct mode_cfg {
 };
 
 static const struct mode_cfg mode_table[] = {
-    [TEST_MODE]   = { "TEST",   2000, 2000, 20, 2000 },
+    [TEST_MODE]   = { "TEST",   2000, 2000, 50, 2000 },
     [NORMAL_MODE] = { "NORMAL", 1000, 2500, 20, 5000 },
     [SIMU_MODE]   = { "SIMU",   1000, 1000, 20,  100 },
 };
@@ -66,14 +69,14 @@ static void queue_update(struct system_messages *data_sensors)
 }
 
 /* Configure timers, GPS rate and RGB for the new mode */
-static void enter_mode(enum operating_mode mode, struct system_messages *data_sensors)
+static void enter_mode(enum operating_mode mode, struct system_messages *data_sensors, bool boot)
 {
     const struct mode_cfg *cfg = &mode_table[mode];
 
     gps_set_update_rate(cfg->gps_ms);
     k_timer_start(&enviroment_timer, K_NO_WAIT, K_MSEC(cfg->env_ms));
     k_timer_start(&imu_timer,        K_NO_WAIT, K_MSEC(cfg->imu_ms));
-    k_timer_start(&main_timer,       K_NO_WAIT, K_MSEC(cfg->main_ms));
+    k_timer_start(&main_timer, boot ? K_MSEC(BOOT_SETTLE_MS) : K_NO_WAIT, K_MSEC(cfg->main_ms));
 
     normal_exit();     /* the NORMAL case below sets it again */
     switch (mode) {
@@ -107,23 +110,20 @@ int main(void)
     enum operating_mode op_mode = TEST_MODE;
     struct system_messages data_sensors = {0};
 
-    enter_mode(op_mode, &data_sensors);
+    enter_mode(op_mode, &data_sensors, true);
 
     while (1) {
 
-        /* Wait for an event: button or timer */
-        uint32_t ev = k_event_wait(&main_events,
-                                   EVT_BUTTON | EVT_TIMER | EVT_DRONE,
-                                   false,
-                                   K_FOREVER);
-
-        /* wait doesn't clear the bits, so we do it here */
-        k_event_clear(&main_events, ev);
+        /* Wait for an event: button or timer. wait_safe clears the received bits itself */
+        uint32_t ev = k_event_wait_safe(&main_events,
+                                        EVT_BUTTON | EVT_TIMER | EVT_DRONE,
+                                        false,
+                                        K_FOREVER);
 
         /* Button: next mode and update timers frecuency */
         if (ev & EVT_BUTTON) {
             op_mode = next_mode(op_mode);
-            enter_mode(op_mode, &data_sensors);
+            enter_mode(op_mode, &data_sensors, false);
         }
 
         /* Timer: read the queues and run the current mode */
@@ -138,7 +138,7 @@ int main(void)
             }
         }
 
-        /* Timer: read the queues and run the current mode */
+        /* Tracker state or sensor health changed: refresh the LED right away */
         if ((ev & EVT_DRONE) && op_mode == NORMAL_MODE) {
             queue_update(&data_sensors);
             change_drone_mode(&data_sensors);

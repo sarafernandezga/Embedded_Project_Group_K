@@ -20,6 +20,7 @@
 /* ----------- LCD -----------*/
 #define MAX_CALIBRATE_LCD   95
 #define MIN_CALIBRATE_LCD   25
+#define ENV_ERR_LIMIT       3
 
 /* Thread Status */
 enum env_status {

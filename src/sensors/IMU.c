@@ -233,5 +233,5 @@ K_THREAD_DEFINE(
     NULL, NULL, NULL,           /* Parameters */
     4,                          /* Priority */
     0,                          /* Options */
-    1000                            /* Start delay */
+    300                            /* Start delay */
 );

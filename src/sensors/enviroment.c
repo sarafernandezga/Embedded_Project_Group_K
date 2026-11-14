@@ -105,9 +105,32 @@ static int take_LDC_measure(struct adc_sequence *sequence,
 
 static int initialize_Si7021(void){
 
+    uint8_t cmd = SI7021_READ_USER_REG;
+    uint8_t reg;
+    int ret;
+
     /* Initialize I2C device */
     if (!device_is_ready(i2c)) {
         return -ENODEV;
+    }
+
+    /* Read the user register: it also detects a missing sensor */
+    ret = i2c_write_read(i2c, SI7021_ADDR, &cmd, 1, &reg, 1);
+
+    if (ret < 0) {
+        return ret;
+    }
+
+    /* Force 12-bit RH / 14-bit temperature (bits 7 and 0 = 0) and heater off (bit 2 = 0) */
+    // it should be default but to be sure 
+    if (reg & 0x85) {
+        uint8_t wr[2] = { SI7021_WRITE_USER_REG, (uint8_t)(reg & ~0x85) };
+
+        ret = i2c_write(i2c, wr, sizeof(wr), SI7021_ADDR);
+
+        if (ret < 0) {
+            return ret;
+        }
     }
 
     return 0;
@@ -150,15 +173,8 @@ static int measure_humidity(float *humidity)
         return -EINVAL;
     }
 
-    /* Send measure command */
-    ret = i2c_write(i2c, &cmd, 1, SI7021_ADDR);
-
-    if (ret < 0) {
-        return ret;
-    }
-
-    /* Read two bytes and CRC */
-    ret = i2c_read(i2c, data, sizeof(data), SI7021_ADDR);
+    /* Send measure command and read two bytes + CRC in ONE I2C transaction */
+    ret = i2c_write_read(i2c, SI7021_ADDR, &cmd, 1, data, sizeof(data));
 
     if (ret < 0) {
         return ret;
@@ -174,6 +190,14 @@ static int measure_humidity(float *humidity)
 
     /* Convert to relative humidity (%) */
     *humidity = 125.0f * (float)raw / 65536.0f - 6.0f;
+
+    /* The datasheet allows values slightly outside 0-100 %: limit them */
+    // page 21 datasheet formula 
+    if (*humidity < 0.0f) {
+        *humidity = 0.0f;
+    } else if (*humidity > 100.0f) {
+        *humidity = 100.0f;
+    }
 
     return 0;
 }
@@ -192,15 +216,8 @@ static int measure_temperature(float *temperature)
         return -EINVAL;
     }
 
-    /* Send command to read previous temperature */
-    ret = i2c_write(i2c, &cmd, 1, SI7021_ADDR);
-
-    if (ret < 0) {
-        return ret;
-    }
-
-    /* Read temperature: only 2 bytes, no CRC */
-    ret = i2c_read(i2c, data, sizeof(data), SI7021_ADDR);
+    /* Read the temperature measured with the previous humidity: 2 bytes, no CRC */
+    ret = i2c_write_read(i2c, SI7021_ADDR, &cmd, 1, data, sizeof(data));
 
     if (ret < 0) {
         return ret;
@@ -216,13 +233,21 @@ static int measure_temperature(float *temperature)
 }
 
 /* Computes the status, publishes the message and notifies main only
- * when the status changes (OK -> error or error -> OK) */
-static void env_publish(int ret_adc, int ret_hum, int ret_temp, struct env_m *data)
+ * when the status changes (OK -> error or error -> OK).
+ * tolerate = true: an isolated failure is hidden (the last valid values are kept)
+ * until ENV_ERR_LIMIT failed cycles in a row. */
+static void env_publish(int ret_adc, int ret_hum, int ret_temp,
+                        struct env_m *data, bool tolerate)
 {
     static bool last_fault = false;
-    bool fault = (data->status != ALL_OK);
+    static uint8_t fail_streak = 0;
 
-    if (ret_adc < 0 && ret_hum < 0) {
+    /* The temperature is only read if the humidity read was OK, so it counts once */
+    int n_fail = (ret_adc < 0) + (ret_hum < 0) +
+                 ((ret_hum == 0 && ret_temp < 0) ? 1 : 0);
+
+    /* The status must be computed BEFORE deciding if there is a fault */
+    if (n_fail >= 2) {
         data->status = MULTIPLE_FAIL;
     } else if (ret_hum < 0) {
         data->status = SI7021_FAIL;
@@ -233,6 +258,19 @@ static void env_publish(int ret_adc, int ret_hum, int ret_temp, struct env_m *da
     } else {
         data->status = ALL_OK;
     }
+
+    if (data->status == ALL_OK) {
+        fail_streak = 0;
+    } else if (tolerate) {
+        if (fail_streak < ENV_ERR_LIMIT) {
+            fail_streak++;              /* saturates at ENV_ERR_LIMIT */
+        }
+        if (fail_streak < ENV_ERR_LIMIT) {
+            data->status = ALL_OK;      /* isolated error: keep the last valid values */
+        }
+    }
+
+    bool fault = (data->status != ALL_OK);
 
     /* Keep only the latest message (put first, then notify) */
     k_msgq_purge(&env_q);
@@ -267,27 +305,35 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
     stat_reset(&temp_stat);
     stat_reset(&hum_stat);
 
-    int init_adc = initialize_adc(&sequence);
-    int init_hum = initialize_Si7021();
+    /* Init failed: report the error and retry every 2 s until both respond */
+    for (;;) {
+        int init_adc = initialize_adc(&sequence);
+        int init_hum = initialize_Si7021();
 
-    /* Init failed: report the error once and stop the thread */
-    if (init_adc < 0 || init_hum < 0) {
-        struct env_m menv = {0};
+        if (init_adc == 0 && init_hum == 0) {
+            break;
+        }
 
-        env_publish(init_adc, init_hum, init_hum, &menv);
-        return;
+        struct env_m menv_err = {0};
+
+        env_publish(init_adc, init_hum, init_hum, &menv_err, false);
+        // maybe it can be change for the semaphore of the sensor
+        k_sleep(K_SECONDS(2)); // this is only in case an error 
     }
+
+    struct env_m last = {0};   /* last valid values */
 
     while (1) {
         k_sem_take(&sem_env_gate, K_FOREVER);
 
-        struct env_m menv = {0};   /* failed values stay at 0 */
+        struct env_m menv = last;  /* a failed value keeps the last valid one */
 
         int ret_adc  = take_LDC_measure(&sequence, &menv.light);
         int ret_hum  = measure_humidity(&menv.hum);
         int ret_temp = (ret_hum == 0) ? measure_temperature(&menv.temp) : ret_hum;
 
-        env_publish(ret_adc, ret_hum, ret_temp, &menv);
+        env_publish(ret_adc, ret_hum, ret_temp, &menv, true);
+        last = menv;
         int64_t now = k_uptime_get();
         bool active = normal_active;
 

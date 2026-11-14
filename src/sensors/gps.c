@@ -368,6 +368,23 @@ static int gps_process_fields(char *fields[], int field_count,
     if (field_count > 9 && fields[9][0] != '\0') {
         data_out->altitude = strtof(fields[9], NULL);
     }
+    
+    // Keep the last valid position so the SIMU frame does not jump to (0, 0)
+    // when the fix is lost. The simulator knows it is not the current position
+    // because GF = 0, SAT = 00 and FLAGS bit 1 (0x0002) is set
+    static float last_lat, last_lon, last_alt;
+    static bool  have_last;
+
+    if (data_out->status == GPS_OK) {
+        last_lat  = data_out->latitude;
+        last_lon  = data_out->longitude;
+        last_alt  = data_out->altitude;
+        have_last = true;
+    } else if (have_last) {
+        data_out->latitude  = last_lat;
+        data_out->longitude = last_lon;
+        data_out->altitude  = last_alt;
+    }
 
     return 1;
 }
@@ -484,12 +501,21 @@ static int gps_get_data(struct gps_data *gps_data)
         } 
 
         /* 2. Validate checksum (must be before split, which modifies the buffer) */
+        static uint8_t bad_sentences;   /* consecutive bad sentences */
+
         ret = gps_validate_checksum(sentence);
 
-        if (ret <= 0) {
+        if (ret <= 0) {  // not valid sentence
+            if (bad_sentences < GPS_CHK_ERR_LIMIT) {
+                bad_sentences++;                 // if there is 5 bad sentences there will be an error 
+            }
+            if (bad_sentences < GPS_CHK_ERR_LIMIT) {
+                continue;                        // isolated error: ignore it 
+            }
             gps_data->status = GPS_ERR_CHECKSUM;
-            return -1;
+            return -1;                          // as mentioned if there are 5 bad sentences it will raise an error
         }
+        bad_sentences = 0;                       // a good sentence clears the count 
 
         /* 3. Split into fields */
         field_count = gps_split_nmea(sentence, fields, GPS_MAX_FIELDS);
@@ -546,10 +572,12 @@ static void my_thread_gps(void *p1, void *p2, void *p3)
 {
     struct gps_data data = {0}; // must be initialized
 
-    if (gps_init() != 0) {
+    /* Init failed: report the error and retry every 2 s */
+    while (gps_init() != 0) {
         data.status = GPS_ERR_NO_DATA;
         gps_publish(&data);
-        return;
+        // maybe it can be change for the semaphore of the sensor
+        k_sleep(K_SECONDS(2)); // same way as the other sensors, only retries if there is an error
     }
 
     while (1) {

@@ -14,13 +14,11 @@ struct system_messages {
     bool env_valid;
 };
 
-
-void test_gps(void);
-void test_enviroment(void);
-void test_IMU(void);
-
-extern struct k_sem sem_main_gate;
 void run_test_mode(struct system_messages *data_sensors);
+enum drone_state get_drone_state(const struct system_messages *d);
+const char *state_str(enum drone_state s);
+void print_report(const char *mode, const struct system_messages *d);
+
 void run_simu_mode(struct system_messages *data_sensors);
 void run_normal_mode(struct system_messages *data_sensors);
 

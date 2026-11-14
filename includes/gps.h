@@ -9,6 +9,8 @@
 #define GPS_MAX_FIELDS 20
 #define GPS_NMEA_BUFFER_SIZE 128
 #define GPS_MSGQ_MAX_MSGS  1
+/* Consecutive bad sentences before a communication error is reported */
+#define GPS_CHK_ERR_LIMIT  5
 
 enum gps_status {
     GPS_OK,

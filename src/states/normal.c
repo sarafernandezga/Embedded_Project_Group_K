@@ -8,7 +8,7 @@
 // ============================================================
 /* PROBLEM has priority over everything (NM5).
  * GPS_NO_FIX is not a fault (gps_valid == 0), only gps_valid < 0 is. */
-static enum drone_state get_state(const struct system_messages *d)
+enum drone_state get_drone_state(const struct system_messages *d)
 {
     if (!d->env_valid || !d->imu_valid ||
         d->gps_valid < 0 || d->imu.state == PROBLEM) {
@@ -18,7 +18,7 @@ static enum drone_state get_state(const struct system_messages *d)
     return d->imu.state;      /* IDLE or FLYING */
 }
 
-static const char *state_str(enum drone_state s)
+const char *state_str(enum drone_state s)
 {
     switch (s) {
     case IDLE:    return "IDLE";
@@ -31,7 +31,7 @@ static const char *state_str(enum drone_state s)
 /* RGB: green = IDLE, yellow = FLYING, red = PROBLEM (NM6) */
 void change_drone_mode(struct system_messages *data_sensors)
 {
-    switch (get_state(data_sensors)) {
+    switch (get_drone_state(data_sensors)) {
         case PROBLEM: set_rgb_color(RED_LED);    break;
         case FLYING:  set_rgb_color(YELLOW_LED); break;
         default:      set_rgb_color(GREEN_LED);  break;
@@ -42,9 +42,9 @@ void change_drone_mode(struct system_messages *data_sensors)
 // Reports
 // ============================================================
 /* Prints the NORMAL mode report (every 5 s) with the latest data of each sensor */
-static void basic_report(struct system_messages *data_sensors){
-
-    printk("MODE: NORMAL\n");
+void print_report(const char *mode, const struct system_messages *data_sensors)
+{
+    printk("MODE: %s\n", mode);
 
     /* GPS: only print the position if there is a fix */
     if (data_sensors->gps_valid == 1) {
@@ -52,11 +52,13 @@ static void basic_report(struct system_messages *data_sensors){
                (unsigned)data_sensors->gps.fix_quality, (unsigned)data_sensors->gps.satellites,
                (double)data_sensors->gps.latitude, (double)data_sensors->gps.longitude,
                (double)data_sensors->gps.altitude, data_sensors->gps.utc_time);
-    } else if (data_sensors->gps_valid == 0) {
-        printk("GPS: no fix\n");
-    } else {
-        printk("GPS: error\n");
-    }
+        } else if (data_sensors->gps_valid == 0) {
+                printk("GPS: fix=0 sats=%02u time=%s (no fix)\n",
+                    (unsigned)data_sensors->gps.satellites,
+                    data_sensors->gps.utc_time[0] ? data_sensors->gps.utc_time : "--:--:--");
+            } else {
+                printk("GPS: error (no data / bad checksum)\n");
+            }
 
     /* IMU: acceleration, angular velocity and integrated angles */
     if (data_sensors->imu_valid) {
@@ -79,7 +81,7 @@ static void basic_report(struct system_messages *data_sensors){
         printk("ENV: error\n");
     }
 
-    printk("STATUS: %s\n\n", state_str(get_state(data_sensors)));
+    printk("STATUS: %s\n\n", state_str(get_drone_state(data_sensors)));
 }
 
 static void print_stat(const char *name, const char *unit, const struct stat_f *s)
@@ -137,7 +139,7 @@ void normal_exit(void)
 /* Called every 5 s */
 void run_normal_mode(struct system_messages *data_sensors)
 {
-    basic_report(data_sensors);
+    print_report("NORMAL", data_sensors);
     change_drone_mode(data_sensors);
     stats_report();
 }
