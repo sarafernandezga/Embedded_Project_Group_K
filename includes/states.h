@@ -5,14 +5,28 @@
 #include "gps.h"            /* struct gps_data */
 #include "enviroment.h"     /* struct env_m */
 
+#define SIMU_MSGQ_MAX_MSGS  1
+
+#define SIMU_FRAME_LENGTH       221
+#define SIMU_FRAME_BUFFER_SIZE  (SIMU_FRAME_LENGTH + 1)
+
 struct system_messages {
     struct imu_m    imu;
     struct gps_data gps;
     struct env_m    env;
+
     bool imu_valid;
     int gps_valid;
     bool env_valid;
+
+    bool ldr_valid;
+    bool si7021_valid;
+
+    uint16_t flags;
 };
+
+
+
 
 void run_test_mode(struct system_messages *data_sensors);
 enum drone_state get_drone_state(const struct system_messages *d);

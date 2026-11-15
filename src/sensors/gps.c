@@ -289,15 +289,15 @@ static int gps_split_nmea(char *sentence,     // Point to the first character of
  * Example: 4024.1234 -> 40 degrees + 24.1234 / 60 = 40.402057.
  * South and West give negative values.
  */
-static float gps_convert_coordinate(float coordinate, char direction)
+static double gps_convert_coordinate(double coordinate, char direction)
 {
-    int degrees = (int)(coordinate / 100.0f);               /* Whole degrees */
-    float minutes = coordinate - (degrees * 100.0f);        /* Remaining minutes */
+    int degrees = (int)(coordinate / 100.0);
+    double minutes = coordinate - (degrees * 100.0);
 
-    float decimal_degrees = degrees + (minutes / 60.0f);
+    double decimal_degrees = degrees + (minutes / 60.0);
 
     if (direction == 'S' || direction == 'W') {
-        decimal_degrees *= -1.0f;
+        decimal_degrees *= -1.0;
     }
 
     return decimal_degrees;
@@ -344,8 +344,8 @@ static int gps_process_fields(char *fields[], int field_count,
         fields[2][0] != '\0' && fields[3][0] != '\0' &&
         fields[4][0] != '\0' && fields[5][0] != '\0') {
 
-        data_out->latitude  = gps_convert_coordinate(strtof(fields[2], NULL), fields[3][0]);
-        data_out->longitude = gps_convert_coordinate(strtof(fields[4], NULL), fields[5][0]);
+        data_out->latitude = gps_convert_coordinate(strtod(fields[2], NULL), fields[3][0]);
+        data_out->longitude = gps_convert_coordinate(strtod(fields[4], NULL), fields[5][0]);
     }
 
     /* Extract fix quality (field 6, 0 = no fix) */
@@ -372,8 +372,9 @@ static int gps_process_fields(char *fields[], int field_count,
     // Keep the last valid position so the SIMU frame does not jump to (0, 0)
     // when the fix is lost. The simulator knows it is not the current position
     // because GF = 0, SAT = 00 and FLAGS bit 1 (0x0002) is set
-    static float last_lat, last_lon, last_alt;
-    static bool  have_last;
+    static double last_lat, last_lon;
+    static float last_alt;
+    static bool have_last;
 
     if (data_out->status == GPS_OK) {
         last_lat  = data_out->latitude;

@@ -20,7 +20,7 @@ enum gps_status {
 };
 
 struct gps_data {
-    float latitude, longitude, altitude, hdop;   
+    double latitude, longitude, altitude, hdop;   
     enum gps_status status;                      
     uint8_t satellites, fix_quality;             
     char utc_time[9];                           
