@@ -50,6 +50,7 @@ int simu_build_frame(const struct system_messages *data_sensors,
         return -ENOMEM;
     }
 
+
     /*
      * STATE: 8 caracteres, completando con '_'.
      */
@@ -89,6 +90,11 @@ int simu_build_frame(const struct system_messages *data_sensors,
     if (!data_sensors->si7021_valid) {
         flags |= 0x0008;
     }
+
+    flags = data_sensors->flags & 0x00F0;
+
+    /* Estimación inercial sin corrección GPS */
+    flags |= 0x0040;
 
     /*
      * Construcción de la trama hasta FLAGS.
