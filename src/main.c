@@ -10,6 +10,7 @@
 #include "enviroment.h"
 #include "IMU.h"
 #include "gps.h"
+#include "simu.h"
 
 /* At boot the sensor threads need a moment to publish their first sample */
 #define BOOT_SETTLE_MS 1200
@@ -46,28 +47,13 @@ static const struct mode_cfg mode_table[] = {
 
 K_TIMER_DEFINE(main_timer, main_timer_handler, NULL);
 
-/* Get the latest message from each queue. If a queue is empty we keep the old data */
 static void queue_update(struct system_messages *data_sensors)
 {
-    if (k_msgq_get(&imu_q, &data_sensors->imu, K_NO_WAIT) == 0) {
-        data_sensors->imu_valid = (data_sensors->imu.status == 0);
-    }
-
-    /* gps_valid: 1 = fix, 0 = no fix, -1 = error */
-    if (k_msgq_get(&gps_msgq, &data_sensors->gps, K_NO_WAIT) == 0) {
-        if (data_sensors->gps.status == GPS_OK) {
-            data_sensors->gps_valid = 1;
-        } else if (data_sensors->gps.status == GPS_NO_FIX) {
-            data_sensors->gps_valid = 0;
-        } else {
-            data_sensors->gps_valid = -1;
-        }
-    }
-
-    if (k_msgq_get(&env_q, &data_sensors->env, K_NO_WAIT) == 0) {
-        data_sensors->env_valid = (data_sensors->env.status == ALL_OK);
-    }
+    k_msgq_get(&imu_q, &data_sensors->imu, K_NO_WAIT);
+    k_msgq_get(&gps_msgq, &data_sensors->gps, K_NO_WAIT);
+    k_msgq_get(&env_q, &data_sensors->env, K_NO_WAIT);
 }
+
 
 /* Configure timers, GPS rate and RGB for the new mode */
 static void enter_mode(enum operating_mode mode, struct system_messages *data_sensors, bool boot)

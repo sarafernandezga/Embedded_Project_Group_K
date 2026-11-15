@@ -330,6 +330,7 @@ static double gps_convert_coordinate(double coordinate, char direction)
  *          0 = not a GGA sentence or no fix,
  *         <0 = invalid arguments.
  */
+
 static int gps_process_fields(char *fields[], int field_count,
                               struct gps_data *data_out)
 {
@@ -343,11 +344,10 @@ static int gps_process_fields(char *fields[], int field_count,
         return 0;
     }
 
-    /* Start clean so no stale values from a previous sentence remain */
+    /* Start clean so no stale values remain */
     memset(data_out, 0, sizeof(*data_out));
-    data_out->status = GPS_NO_FIX;
 
-    /* Extract UTC time (field 1: hhmmss.sss) and format it as HH:MM:SS */
+    /* Extract UTC time */
     if (field_count > 1 && fields[1][0] != '\0') {
         int hours;
         int minutes;
@@ -359,56 +359,57 @@ static int gps_process_fields(char *fields[], int field_count,
         }
     }
 
-    /* Extract latitude and longitude (fields 2-5: value + N/S, value + E/W) */
+    /* Extract latitude and longitude */
     if (field_count > 5 &&
         fields[2][0] != '\0' && fields[3][0] != '\0' &&
         fields[4][0] != '\0' && fields[5][0] != '\0') {
 
-        data_out->latitude = gps_convert_coordinate(strtod(fields[2], NULL), fields[3][0]);
-        data_out->longitude = gps_convert_coordinate(strtod(fields[4], NULL), fields[5][0]);
+        data_out->latitude = gps_convert_coordinate(
+            strtod(fields[2], NULL), fields[3][0]);
+
+        data_out->longitude = gps_convert_coordinate(
+            strtod(fields[4], NULL), fields[5][0]);
     }
 
-    /* Extract fix quality (field 6, 0 = no fix) */
+    /* Extract fix quality */
     if (field_count > 6 && fields[6][0] != '\0') {
         data_out->fix_quality = atoi(fields[6]);
-        data_out->status = (data_out->fix_quality > 0) ? GPS_OK : GPS_NO_FIX;
     }
 
-    /* Extract number of satellites (field 7) */
+    /* Extract number of satellites */
     if (field_count > 7 && fields[7][0] != '\0') {
         data_out->satellites = atoi(fields[7]);
     }
 
-    /* Extract HDOP, horizontal precision (field 8) */
+    /* Extract HDOP */
     if (field_count > 8 && fields[8][0] != '\0') {
         data_out->hdop = strtof(fields[8], NULL);
     }
 
-    /* Extract altitude in meters (field 9) */
+    /* Extract altitude */
     if (field_count > 9 && fields[9][0] != '\0') {
         data_out->altitude = strtof(fields[9], NULL);
     }
-    
-    // Keep the last valid position so the SIMU frame does not jump to (0, 0)
-    // when the fix is lost. The simulator knows it is not the current position
-    // because GF = 0, SAT = 00 and FLAGS bit 1 (0x0002) is set
+
+    /* Keep last valid position when fix is lost */
     static double last_lat, last_lon;
     static float last_alt;
     static bool have_last;
 
-    if (data_out->status == GPS_OK) {
-        last_lat  = data_out->latitude;
-        last_lon  = data_out->longitude;
-        last_alt  = data_out->altitude;
+    if (data_out->fix_quality > 0) {
+        last_lat = data_out->latitude;
+        last_lon = data_out->longitude;
+        last_alt = data_out->altitude;
         have_last = true;
     } else if (have_last) {
-        data_out->latitude  = last_lat;
+        data_out->latitude = last_lat;
         data_out->longitude = last_lon;
-        data_out->altitude  = last_alt;
+        data_out->altitude = last_alt;
     }
 
     return 1;
 }
+
 
 
 /*
@@ -533,7 +534,6 @@ static int gps_get_data(struct gps_data *gps_data)
             if (bad_sentences < GPS_CHK_ERR_LIMIT) {
                 continue;                        // isolated error: ignore it 
             }
-            gps_data->status = GPS_ERR_CHECKSUM;
             return -1;                          // as mentioned if there are 5 bad sentences it will raise an error
         }
         bad_sentences = 0;                       // a good sentence clears the count 
@@ -542,7 +542,6 @@ static int gps_get_data(struct gps_data *gps_data)
         field_count = gps_split_nmea(sentence, fields, GPS_MAX_FIELDS);
 
         if (field_count <= 0) {  /* No fields detected */
-           gps_data->status = GPS_ERR_NO_DATA;
            return -1;
         }
 
@@ -550,7 +549,6 @@ static int gps_get_data(struct gps_data *gps_data)
         ret = gps_process_fields(fields, field_count, gps_data);
 
         if (ret < 0) {
-            gps_data->status = GPS_ERR_NO_DATA;
             return -1;
         }
 
@@ -565,20 +563,23 @@ static int gps_get_data(struct gps_data *gps_data)
 }
 
 /* Publica un mensaje del GPS (dato o error) en un solo sitio */
-static void gps_publish(struct gps_data *data)
+
+
+static void gps_publish(struct gps_data *data, int ret)
 {
     static bool last_fault = false;
-    bool fault = (data->status != GPS_OK && data->status != GPS_NO_FIX);
+
+    data->gps_valid = (ret < 0) ? -1 : 0;
+
+    bool fault = (data->gps_valid < 0);
 
     k_msgq_purge(&gps_msgq);
     k_msgq_put(&gps_msgq, data, K_NO_WAIT);
 
-    /* Notify only on the transition healthy -> faulty */
-    if (fault && !last_fault) {
+    if (fault != last_fault) {
+        last_fault = fault;
         k_event_post(&main_events, EVT_DRONE);
     }
-    
-    last_fault = fault;
 }
 
 static void gps_enter_standby(void)
@@ -613,6 +614,12 @@ static void gps_exit_standby(void)
  */
 static void my_thread_gps(void *p1, void *p2, void *p3)
 {
+    ARG_UNUSED(p1);
+    ARG_UNUSED(p2);
+    ARG_UNUSED(p3);
+
+    int ret;
+
     struct gps_data data = {0}; // must be initialized
 
     /* Stop bloqueado desde el principio: el GPS va a transmitir y USART1 no recibe en Stop */
@@ -620,9 +627,8 @@ static void my_thread_gps(void *p1, void *p2, void *p3)
     bool locked = true;
 
     /* Init failed: report the error and retry every 2 s */
-    while (gps_init() != 0) {
-        data.status = GPS_ERR_NO_DATA;
-        gps_publish(&data);
+    while ((ret = gps_init()) != 0) {
+        gps_publish(&data, -1);
         // maybe it can be change for the semaphore of the sensor
         k_sleep(K_SECONDS(2)); // same way as the other sensors, only retries if there is an error
     }

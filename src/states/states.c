@@ -10,12 +10,15 @@
  * GPS_NO_FIX is not a fault (gps_valid == 0), only gps_valid < 0 is. */
 enum drone_state get_drone_state(const struct system_messages *d)
 {
-    if (!d->env_valid || !d->imu_valid ||
-        d->gps_valid < 0 || d->imu.state == PROBLEM) {
+    if (d->imu.valid_imu < 0 ||
+        d->gps.gps_valid < 0 ||
+        d->env.ldr_valid < 0 ||
+        d->env.si7021_valid < 0 ||
+        d->imu.state == PROBLEM) {
         return PROBLEM;
     }
 
-    return d->imu.state;      /* IDLE or FLYING */
+    return d->imu.state;
 }
 
 const char *state_str(enum drone_state s)
@@ -47,21 +50,27 @@ void print_report(const char *mode, const struct system_messages *data_sensors)
     printk("MODE: %s\n", mode);
 
     /* GPS: only print the position if there is a fix */
-    if (data_sensors->gps_valid == 1) {
+    if (data_sensors->gps.gps_valid < 0) {
+        printk("GPS: error (no data / bad checksum)\n");
+
+    } else if (data_sensors->gps.fix_quality > 0) {
         printk("GPS: fix=%u sats=%02u lat=%+010.6f lon=%+011.6f alt=%+08.1f m time=%s\n",
-               (unsigned)data_sensors->gps.fix_quality, (unsigned)data_sensors->gps.satellites,
-               (double)data_sensors->gps.latitude, (double)data_sensors->gps.longitude,
-               (double)data_sensors->gps.altitude, data_sensors->gps.utc_time);
-        } else if (data_sensors->gps_valid == 0) {
-                printk("GPS: fix=0 sats=%02u time=%s (no fix)\n",
-                    (unsigned)data_sensors->gps.satellites,
-                    data_sensors->gps.utc_time[0] ? data_sensors->gps.utc_time : "--:--:--");
-            } else {
-                printk("GPS: error (no data / bad checksum)\n");
-            }
+            (unsigned)data_sensors->gps.fix_quality,
+            (unsigned)data_sensors->gps.satellites,
+            (double)data_sensors->gps.latitude,
+            (double)data_sensors->gps.longitude,
+            (double)data_sensors->gps.altitude,
+            data_sensors->gps.utc_time);
+
+    } else {
+        printk("GPS: fix=0 sats=%02u time=%s (no fix)\n",
+            (unsigned)data_sensors->gps.satellites,
+            data_sensors->gps.utc_time[0]
+                ? data_sensors->gps.utc_time : "--:--:--");
+    }
 
     /* IMU: acceleration, angular velocity and integrated angles */
-    if (data_sensors->imu_valid) {
+    if (data_sensors->imu.valid_imu == 0) {
         printk("IMU: ax=%+07.2f m/s2 ay=%+07.2f m/s2 az=%+07.2f m/s2\n",
                (double)data_sensors->imu.ax, (double)data_sensors->imu.ay, (double)data_sensors->imu.az);
         printk("IMU: gx=%+07.1f deg/s gy=%+07.1f deg/s gz=%+07.1f deg/s\n",
@@ -73,10 +82,17 @@ void print_report(const char *mode, const struct system_messages *data_sensors)
     }
 
     /* Light (LDR) and temperature/humidity sensor */
-    if (data_sensors->env_valid) {
-        printk("LIGHT: %05.1f %%\n", (double)data_sensors->env.light);
+    if (data_sensors->env.ldr_valid == 0) {
+        printk("LIGHT: %05.1f %%\n",
+            (double)data_sensors->env.light);
+    } else {
+        printk("LIGHT: error\n");
+    }
+
+    if (data_sensors->env.si7021_valid == 0) {
         printk("ENV: temp=%+06.1f C hum=%05.1f %%\n",
-               (double)data_sensors->env.temp, (double)data_sensors->env.hum);
+            (double)data_sensors->env.temp,
+            (double)data_sensors->env.hum);
     } else {
         printk("ENV: error\n");
     }
@@ -142,4 +158,11 @@ void run_normal_mode(struct system_messages *data_sensors)
     print_report("NORMAL", data_sensors);
     change_drone_mode(data_sensors);
     stats_report();
+}
+
+
+/* TEST MODE: all measured values every 2 s (TM2, TM3, TM5) */
+void run_test_mode(struct system_messages *data_sensors)
+{
+    print_report("TEST", data_sensors);
 }
