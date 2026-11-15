@@ -9,6 +9,13 @@
 
 #define I2C_NODE DT_NODELABEL(i2c2) 
 
+/*
+ * Peso de la estimación para mitigar la gravedad.
+ * Cerca de 1: se adapta despacio a cambios de inclinación (y absorbe menos
+ * movimiento real). Más bajo: se adapta rápido (y absorbe más movimiento).
+ */
+#define GRAVITY_FILTER_ALPHA  0.98f
+
 // Definimos la cola de mensajes para el IMU (guarda el último mensaje disponible)
 K_MSGQ_DEFINE(imu_q, sizeof(struct imu_m), 1, 4);
 K_MSGQ_DEFINE(imu_stats_q, sizeof(struct imu_stats), 1, 4);
@@ -109,9 +116,26 @@ int IMU_read_and_process(const struct device *i2c_dev, struct imu_m *mimu, float
     float gy = raw_gy / 65.5f;
     float gz = raw_gz / 65.5f;
 
-    mimu->vx += ax * dt;
-    mimu->vy += ay * dt;
-    mimu->vz += az * dt;
+    static float grav_x, grav_y, grav_z;     /* gravedad estimada en cada eje */
+    static bool  grav_ready = false;
+
+    if (!grav_ready) {
+        /* Primera muestra: se parte de lo medido para no arrancar con un salto */
+        grav_x = ax;
+        grav_y = ay;
+        grav_z = az;
+        grav_ready = true;
+    }
+
+    /* Filtro: nuevo = ALPHA * anterior + (1 - ALPHA) * medida */
+    grav_x = GRAVITY_FILTER_ALPHA * grav_x + (1.0f - GRAVITY_FILTER_ALPHA) * ax;
+    grav_y = GRAVITY_FILTER_ALPHA * grav_y + (1.0f - GRAVITY_FILTER_ALPHA) * ay;
+    grav_z = GRAVITY_FILTER_ALPHA * grav_z + (1.0f - GRAVITY_FILTER_ALPHA) * az;
+
+    /* Aceleración lineal = medida - gravedad; integración de Euler: v += a * dt */
+    mimu->vx += (ax - grav_x) * dt;
+    mimu->vy += (ay - grav_y) * dt;
+    mimu->vz += (az - grav_z) * dt;
 
     mimu->x += mimu->vx * dt;
     mimu->y += mimu->vy * dt;

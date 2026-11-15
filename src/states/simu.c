@@ -95,11 +95,11 @@ int simu_build_frame(const struct system_messages *data_sensors,
         flags |= 0x0002;
     }
 
-    if (!data_sensors->env.ldr_valid < 0) {
+    if (data_sensors->env.ldr_valid < 0) {
         flags |= 0x0004;
     }
 
-    if (!data_sensors->env.si7021_valid < 0) {
+    if (data_sensors->env.si7021_valid < 0) {
         flags |= 0x0008;
     }
 
