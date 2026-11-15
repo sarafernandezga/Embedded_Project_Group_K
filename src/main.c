@@ -1,5 +1,6 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
+#include <zephyr/pm/policy.h>
 
 #include "includes.h"
 #include "main.h"
@@ -77,6 +78,12 @@ static void enter_mode(enum operating_mode mode, struct system_messages *data_se
     k_timer_start(&enviroment_timer, K_NO_WAIT, K_MSEC(cfg->env_ms));
     k_timer_start(&imu_timer,        K_NO_WAIT, K_MSEC(cfg->imu_ms));
     k_timer_start(&main_timer, boot ? K_MSEC(BOOT_SETTLE_MS) : K_NO_WAIT, K_MSEC(cfg->main_ms));
+
+    #define GPS_STANDBY_NORMAL_MS  30000   /* NORMAL: 30 s dormido entre ventanas */
+
+    /* TEST y SIMU: GPS siempre activo. NORMAL: GPS en ciclo de trabajo */
+    gps_set_duty_cycle(mode == NORMAL_MODE ? GPS_STANDBY_NORMAL_MS : 0);
+    rgb_set_pulsed(mode == NORMAL_MODE || mode == TEST_MODE);   /* ver sección 5 */
 
     normal_exit();     /* the NORMAL case below sets it again */
     switch (mode) {

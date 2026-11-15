@@ -69,3 +69,22 @@
     status = "okay";
     current-speed = <115200>;
 };
+
+/* ============================================================
+ * LOW POWER 
+ ================================================== */
+
+&clk_lse {
+    status = "okay";
+};
+
+&lptim1 {
+    status = "okay";
+    /* extracted directly from the dts */
+    clocks = <&rcc STM32_CLOCK(APB1, 31)>,
+             <&rcc STM32_SRC_LSE LPTIM1_SEL(3)>;
+};
+
+&cpu0 {
+    cpu-power-states = <&stop0 &stop1>;
+};

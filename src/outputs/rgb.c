@@ -35,7 +35,7 @@ int initialize_RGB(void){
     return 0;
 }
 
-void set_rgb_color(enum rgb_modes mode)
+static void rgb_apply(enum rgb_modes mode)
 {
     /* Turn off all LEDs before selecting the new color */
     gpio_pin_set_dt(&rgb_blue, 0);
@@ -86,4 +86,41 @@ void set_rgb_color(enum rgb_modes mode)
             break;
     }
 
+}
+
+#define RGB_ON_MS      50
+#define RGB_PERIOD_MS  1000
+
+static enum rgb_modes rgb_current = OFF_LED;
+static bool rgb_pulsed;
+
+static void rgb_off_cb(struct k_timer *t) { ARG_UNUSED(t); rgb_apply(OFF_LED); }
+K_TIMER_DEFINE(rgb_off_timer, rgb_off_cb, NULL);
+
+static void rgb_period_cb(struct k_timer *t)
+{
+    ARG_UNUSED(t);
+    rgb_apply(rgb_current);
+    k_timer_start(&rgb_off_timer, K_MSEC(RGB_ON_MS), K_NO_WAIT);
+}
+K_TIMER_DEFINE(rgb_period_timer, rgb_period_cb, NULL);
+
+void set_rgb_color(enum rgb_modes mode)
+{
+    rgb_current = mode;
+    if (!rgb_pulsed) {
+        rgb_apply(mode);
+    }
+}
+
+void rgb_set_pulsed(bool en)
+{
+    rgb_pulsed = en;
+    if (en) {
+        k_timer_start(&rgb_period_timer, K_NO_WAIT, K_MSEC(RGB_PERIOD_MS));
+    } else {
+        k_timer_stop(&rgb_period_timer);
+        k_timer_stop(&rgb_off_timer);
+        rgb_apply(rgb_current);
+    }
 }

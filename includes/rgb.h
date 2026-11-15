@@ -1,5 +1,6 @@
 #ifndef RGB_H
 #define RGB_H
+#include <stdbool.h>
 
 /* Leds Modes */
 enum rgb_modes {
@@ -15,5 +16,6 @@ enum rgb_modes {
 
 int initialize_RGB(void);
 void set_rgb_color(enum rgb_modes mode);
+void rgb_set_pulsed(bool en);
 
 #endif
