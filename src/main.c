@@ -9,6 +9,7 @@
 #include "enviroment.h"
 #include "IMU.h"
 #include "gps.h"
+#include "simu.h"
 
 /* At boot the sensor threads need a moment to publish their first sample */
 #define BOOT_SETTLE_MS 1200

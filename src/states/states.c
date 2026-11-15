@@ -159,3 +159,10 @@ void run_normal_mode(struct system_messages *data_sensors)
     change_drone_mode(data_sensors);
     stats_report();
 }
+
+
+/* TEST MODE: all measured values every 2 s (TM2, TM3, TM5) */
+void run_test_mode(struct system_messages *data_sensors)
+{
+    print_report("TEST", data_sensors);
+}

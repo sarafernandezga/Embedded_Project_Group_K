@@ -1,4 +1,5 @@
 #include "includes.h"
+#include "simu.h"
 #include "states.h"
 
 #include <zephyr/device.h>
@@ -86,19 +87,19 @@ int simu_build_frame(const struct system_messages *data_sensors,
      */
     flags = data_sensors->flags & 0x00F0;
 
-    if (!data_sensors->imu.valid_imu) {
+    if (data_sensors->imu.valid_imu < 0) {
         flags |= 0x0001;
     }
 
-    if (data_sensors->gps.gps_valid != 1) {
+    if (data_sensors->gps.gps_valid < 0) {
         flags |= 0x0002;
     }
 
-    if (!data_sensors->env.ldr_valid) {
+    if (!data_sensors->env.ldr_valid < 0) {
         flags |= 0x0004;
     }
 
-    if (!data_sensors->env.si7021_valid) {
+    if (!data_sensors->env.si7021_valid < 0) {
         flags |= 0x0008;
     }
 
@@ -261,8 +262,6 @@ void my_thread_simu(void *p1, void *p2, void *p3)
             }
         }
 
-
-       
     }
 }
 
