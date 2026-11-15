@@ -9,6 +9,25 @@
 #include "gps.h"
 #include "main.h"
 
+#include <zephyr/pm/policy.h>
+#include <zephyr/pm/device.h>
+
+#define GPS_ACQ_TIMEOUT_MS  30000   /* máximo esperando fix en cada ventana */
+
+static atomic_t gps_standby_ms;      /* 0 = GPS siempre activo (continuo) */
+static volatile bool gps_standby;    /* true mientras el GPS está dormido */
+static uint16_t gps_rate_ms = 2000;  /* último rate pedido (se reaplica al despertar) */
+K_SEM_DEFINE(gps_wake_sem, 0, 1);
+
+/* 0 = continuo (SIMU/TEST). >0 = ms en standby entre ventanas (NORMAL) */
+void gps_set_duty_cycle(uint32_t standby_ms)
+{
+    atomic_set(&gps_standby_ms, standby_ms);
+    if (standby_ms == 0) {
+        k_sem_give(&gps_wake_sem);   /* si dormía, despiértalo ya */
+    }
+}
+
 /* GPS UART device configuration */
 #define GPS_UART_NODE DT_NODELABEL(usart1)
 static const struct device *gps_uart = DEVICE_DT_GET(GPS_UART_NODE);
@@ -112,7 +131,8 @@ static void gps_send_command(const char *command)
  */
 void gps_set_update_rate(uint16_t interval_ms)
 {
-    if (!gps_ready) {
+    gps_rate_ms = interval_ms;
+    if (!gps_ready || gps_standby) {
         return;
     }
 
@@ -287,7 +307,7 @@ static int gps_split_nmea(char *sentence,     // Point to the first character of
 /*
  * Converts an NMEA coordinate (ddmm.mmmm) to decimal degrees.
  * Example: 4024.1234 -> 40 degrees + 24.1234 / 60 = 40.402057.
- * South and West give negative values.
+ * South and West give negative val                  ues.
  */
 static double gps_convert_coordinate(double coordinate, char direction)
 {
@@ -562,7 +582,27 @@ static void gps_publish(struct gps_data *data, int ret)
     }
 }
 
+static void gps_enter_standby(void)
+{
+    gps_send_command("$PMTK161,0*28\r\n");   /* standby (el checksum 28 ya está calculado) */
+    k_sleep(K_MSEC(50));                     /* deja terminar el envío */
+    uart_irq_rx_disable(gps_uart);
+    (void)pm_device_action_run(gps_uart, PM_DEVICE_ACTION_SUSPEND);
+    ring_buf_reset(&gps_rx_ringbuf);
+    gps_standby = true;
+}
 
+static void gps_exit_standby(void)
+{
+    gps_standby = false;
+    (void)pm_device_action_run(gps_uart, PM_DEVICE_ACTION_RESUME);
+    uart_irq_rx_enable(gps_uart);
+    gps_nmea_index = 0;
+    k_sem_reset(&gps_sem);
+    uart_poll_out(gps_uart, '\n');           /* cualquier byte despierta al GPS */
+    k_sleep(K_MSEC(100));
+    gps_set_update_rate(gps_rate_ms);        /* reaplicamos el rate */
+}
 
 // ============================================================
 // Thread GPS
@@ -582,24 +622,56 @@ static void my_thread_gps(void *p1, void *p2, void *p3)
 
     struct gps_data data = {0}; // must be initialized
 
+    /* Stop bloqueado desde el principio: el GPS va a transmitir y USART1 no recibe en Stop */
+    pm_policy_state_lock_get(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+    bool locked = true;
+
     /* Init failed: report the error and retry every 2 s */
     while ((ret = gps_init()) != 0) {
         gps_publish(&data, -1);
         // maybe it can be change for the semaphore of the sensor
         k_sleep(K_SECONDS(2)); // same way as the other sensors, only retries if there is an error
     }
-
-    while (1) {
-
-        if ((ret = k_sem_take(&gps_sem, K_SECONDS(3))) != 0) {
-            gps_publish(&data, ret);
-            continue;
-        }
-
-        while ((ret = gps_get_data(&data)) != 0) {
-            gps_publish(&data, ret);
-        }
     
+    while (1) {
+        /* ---- Fase ACTIVA: el GPS habla, no se puede entrar en Stop ---- */
+        if (!locked) {
+            pm_policy_state_lock_get(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+            locked = true;
+        }
+        int64_t t0 = k_uptime_get();
+        bool got_fix = false;
+
+        while (1) {
+            if (k_sem_take(&gps_sem, K_SECONDS(3)) != 0) {
+                data.status = GPS_ERR_NO_DATA;
+                gps_publish(&data);
+            } else {
+                while (gps_get_data(&data) != 0) {
+                    gps_publish(&data);
+                    if (data.status == GPS_OK) { got_fix = true; }
+                }
+            }
+
+            if (atomic_get(&gps_standby_ms) == 0) {      /* modo continuo */
+                t0 = k_uptime_get();
+                got_fix = false;
+                continue;
+            }
+            if (got_fix || (k_uptime_get() - t0) > GPS_ACQ_TIMEOUT_MS) {
+                break;
+            }
+        }
+
+        /* ---- Fase STANDBY: GPS dormido, ahora sí se puede entrar en Stop ---- */
+        gps_enter_standby();
+        pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
+        locked = false;
+
+        k_sem_reset(&gps_wake_sem);
+        k_sem_take(&gps_wake_sem, K_MSEC(atomic_get(&gps_standby_ms)));
+
+        gps_exit_standby();
     }
 
 }
