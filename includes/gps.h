@@ -24,6 +24,4 @@ extern struct k_msgq gps_msgq;
 
 void gps_set_update_rate(uint16_t interval_ms);
 
-void gps_set_duty_cycle(uint32_t standby_ms);
-
 #endif

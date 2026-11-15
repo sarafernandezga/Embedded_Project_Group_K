@@ -16,6 +16,8 @@
  */
 #define GRAVITY_FILTER_ALPHA  0.98f
 
+#define ZUPT_HOLD_S  0.5f           // zero velocity update (cuando esta en idle reseteamos la velocidad)  
+
 // Definimos la cola de mensajes para el IMU (guarda el último mensaje disponible)
 K_MSGQ_DEFINE(imu_q, sizeof(struct imu_m), 1, 4);
 K_MSGQ_DEFINE(imu_stats_q, sizeof(struct imu_stats), 1, 4);
@@ -132,14 +134,27 @@ int IMU_read_and_process(const struct device *i2c_dev, struct imu_m *mimu, float
     grav_y = GRAVITY_FILTER_ALPHA * grav_y + (1.0f - GRAVITY_FILTER_ALPHA) * ay;
     grav_z = GRAVITY_FILTER_ALPHA * grav_z + (1.0f - GRAVITY_FILTER_ALPHA) * az;
 
-    /* Aceleración lineal = medida - gravedad; integración de Euler: v += a * dt */
-    mimu->vx += (ax - grav_x) * dt;
-    mimu->vy += (ay - grav_y) * dt;
-    mimu->vz += (az - grav_z) * dt;
+    /* ZUPT: si el estado se mantiene IDLE durante ZUPT_HOLD_S, el tracker está
+     * parado: se anula la velocidad (frena el drift) y la posición no cambia */
+    enum drone_state raw_state = calcular_estado(ax, ay, az, gx, gy, gz);
+    static float idle_time;
 
-    mimu->x += mimu->vx * dt;
-    mimu->y += mimu->vy * dt;
-    mimu->z += mimu->vz * dt;
+    idle_time = (raw_state == IDLE) ? (idle_time + dt) : 0.0f;
+
+    if (idle_time >= ZUPT_HOLD_S) {
+        mimu->vx = 0.0f;
+        mimu->vy = 0.0f;
+        mimu->vz = 0.0f;
+    } else {
+        /* Aceleración lineal = medida - gravedad; integración de Euler: v += a * dt */
+        mimu->vx += (ax - grav_x) * dt;
+        mimu->vy += (ay - grav_y) * dt;
+        mimu->vz += (az - grav_z) * dt;
+
+        mimu->x += mimu->vx * dt;
+        mimu->y += mimu->vy * dt;
+        mimu->z += mimu->vz * dt;
+    }
 
     // Integración numérica
     mimu->roll  += gx * dt;
@@ -148,7 +163,7 @@ int IMU_read_and_process(const struct device *i2c_dev, struct imu_m *mimu, float
 
     mimu->ax = ax; mimu->ay = ay; mimu->az = az;
     mimu->gx = gx; mimu->gy = gy; mimu->gz = gz;
-    mimu->state = calcular_estado(ax, ay, az, gx, gy, gz);
+    mimu->state = raw_state;
     mimu->valid_imu = 0;
 
     return 0;
