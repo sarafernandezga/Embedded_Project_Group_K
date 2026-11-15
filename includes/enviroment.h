@@ -36,7 +36,8 @@ struct env_m {
     float temp;
     float hum;
     float light;
-    enum env_status status;
+    int ldr_valid;
+    int si7021_valid;
 };
 
 /* Message Queue ID */

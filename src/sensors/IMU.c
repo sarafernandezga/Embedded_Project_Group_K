@@ -24,12 +24,11 @@ static void imu_sem_timer(struct k_timer *timer)
 K_TIMER_DEFINE(imu_timer, imu_sem_timer, NULL);
 
 int IMU_initialization(const struct device *i2c_dev){
-    if (!device_is_ready(i2c_dev)) {
-            printk("Error: El bus I2C no está listo.\n");
-            return -ENODEV;
-        }
-
     int ret;
+
+    if (!device_is_ready(i2c_dev)) {
+        return -ENODEV;
+    }
 
     // PWR_MGMT_1: Despertar (SLEEP=0) y reloj a PLL Gyro X 
     // revisar pero pone en el sensor que es la mejor cosa que hacer
@@ -87,7 +86,7 @@ int IMU_read_and_process(const struct device *i2c_dev, struct imu_m *mimu, float
     uint8_t buf[14];
 
     if (i2c_burst_read(i2c_dev, MPU6050_ADDR, MPU6050_ACCEL_XOUT_H_REG, buf, 14) != 0) {
-        mimu->status = -1;
+        mimu->valid_imu = -1;
         return -EIO;
     }
 
@@ -126,7 +125,7 @@ int IMU_read_and_process(const struct device *i2c_dev, struct imu_m *mimu, float
     mimu->ax = ax; mimu->ay = ay; mimu->az = az;
     mimu->gx = gx; mimu->gy = gy; mimu->gz = gz;
     mimu->state = calcular_estado(ax, ay, az, gx, gy, gz);
-    mimu->status = 0;
+    mimu->valid_imu = 0;
 
     return 0;
 }
@@ -147,6 +146,11 @@ static void imu_change_mode(struct imu_m *mimu)
 
 
 void IMU_measurement(void *p1, void *p2, void *p3) {
+    
+    ARG_UNUSED(p1);
+    ARG_UNUSED(p2);
+    ARG_UNUSED(p3);
+
     const struct device *i2c_dev = DEVICE_DT_GET(I2C_NODE);
 
     struct imu_m mimu = {0};
@@ -162,7 +166,7 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
     stat_reset(&gyr_stat);
 
     while (IMU_initialization(i2c_dev) < 0) {
-        mimu.status = -1;
+        mimu.valid_imu = -1;
         mimu.state = PROBLEM;
         k_msgq_purge(&imu_q);
         k_msgq_put(&imu_q, &mimu, K_NO_WAIT);
@@ -204,7 +208,7 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
 
         if (IMU_read_and_process(i2c_dev, &mimu, dt) == 0) {
             err_count = 0;
-            mimu.status = 0;
+            mimu.valid_imu = 0;
 
             if (active) {
                 stat_add(&acc_stat, sqrtf(mimu.ax*mimu.ax + mimu.ay*mimu.ay + mimu.az*mimu.az));
@@ -215,7 +219,7 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
             if (err_count < IMU_ERR_LIMIT) {
                 continue;             /* isolated error: keep the last data */
             }
-            mimu.status = -1;         /* 5 failures in a row: PROBLEM */
+            mimu.valid_imu = -1;         /* 5 failures in a row: PROBLEM */
             mimu.state = PROBLEM;
         }
 

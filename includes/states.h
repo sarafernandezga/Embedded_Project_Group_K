@@ -15,13 +15,6 @@ struct system_messages {
     struct gps_data gps;
     struct env_m    env;
 
-    bool imu_valid;
-    int gps_valid;
-    bool env_valid;
-
-    bool ldr_valid;
-    bool si7021_valid;
-
     uint16_t flags;
 };
 

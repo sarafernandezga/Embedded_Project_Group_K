@@ -16,7 +16,6 @@ static const struct device *simu_uart = DEVICE_DT_GET(SIMU_UART_NODE);
 K_MSGQ_DEFINE(simu_msgq, sizeof(struct system_messages), SIMU_MSGQ_MAX_MSGS, 4);
 
 
-
 /* SIMU frame: pending. In SIMU mode nothing else may be printed (SM6, GR5) */
 void run_simu_mode(struct system_messages *data_sensors)
 {
@@ -29,6 +28,19 @@ void run_simu_mode(struct system_messages *data_sensors)
 
 }
 
+
+static double clamp_float(float value, float min, float max)
+{
+    if (value < min) {
+        return (double)min;
+    }
+
+    if (value > max) {
+        return (double)max;
+    }
+
+    return (double)value;
+}
 
 int simu_build_frame(const struct system_messages *data_sensors,
                      uint16_t sequence,
@@ -49,7 +61,6 @@ int simu_build_frame(const struct system_messages *data_sensors,
     if (frame_size < SIMU_FRAME_BUFFER_SIZE) {
         return -ENOMEM;
     }
-
 
     /*
      * STATE: 8 caracteres, completando con '_'.
@@ -75,23 +86,21 @@ int simu_build_frame(const struct system_messages *data_sensors,
      */
     flags = data_sensors->flags & 0x00F0;
 
-    if (!data_sensors->imu_valid) {
+    if (!data_sensors->imu.valid_imu) {
         flags |= 0x0001;
     }
 
-    if (data_sensors->gps_valid != 1) {
+    if (data_sensors->gps.gps_valid != 1) {
         flags |= 0x0002;
     }
 
-    if (!data_sensors->ldr_valid) {
+    if (!data_sensors->env.ldr_valid) {
         flags |= 0x0004;
     }
 
-    if (!data_sensors->si7021_valid) {
+    if (!data_sensors->env.si7021_valid) {
         flags |= 0x0008;
     }
-
-    flags = data_sensors->flags & 0x00F0;
 
     /* Estimación inercial sin corrección GPS */
     flags |= 0x0040;
@@ -125,16 +134,16 @@ int simu_build_frame(const struct system_messages *data_sensors,
         (unsigned int)sequence,
         (unsigned int)timestamp_ms,
 
-        (unsigned int)(data_sensors->gps_valid == 1),
+        (unsigned int)(data_sensors->gps.fix_quality == 1),
         (unsigned int)data_sensors->gps.satellites,
 
         data_sensors->gps.latitude,
         data_sensors->gps.longitude,
         data_sensors->gps.altitude,
 
-        (double)data_sensors->imu.x,
-        (double)data_sensors->imu.y,
-        (double)data_sensors->imu.z,
+        clamp_float(data_sensors->imu.x, -9999.99f, 9999.99f),
+        clamp_float(data_sensors->imu.y, -9999.99f, 9999.99f),
+        clamp_float(data_sensors->imu.z, -9999.99f, 9999.99f),
 
         (double)data_sensors->imu.vx,
         (double)data_sensors->imu.vy,

@@ -12,18 +12,11 @@
 /* Consecutive bad sentences before a communication error is reported */
 #define GPS_CHK_ERR_LIMIT  5
 
-enum gps_status {
-    GPS_OK,
-    GPS_ERR_NO_DATA,   /* silencio: cable o alimentación */
-    GPS_ERR_CHECKSUM,  /* datos corruptos */
-    GPS_NO_FIX,         /* comunica, pero sin posición */
-};
-
 struct gps_data {
-    double latitude, longitude, altitude, hdop;   
-    enum gps_status status;                      
+    double latitude, longitude, altitude, hdop;              
     uint8_t satellites, fix_quality;             
-    char utc_time[9];                           
+    char utc_time[9];    
+    int gps_valid;                        
 };
 
 /* Message Queue ID */

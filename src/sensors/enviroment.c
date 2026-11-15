@@ -236,54 +236,30 @@ static int measure_temperature(float *temperature)
  * when the status changes (OK -> error or error -> OK).
  * tolerate = true: an isolated failure is hidden (the last valid values are kept)
  * until ENV_ERR_LIMIT failed cycles in a row. */
+
+
 static void env_publish(int ret_adc, int ret_hum, int ret_temp,
-                        struct env_m *data, bool tolerate)
+                        struct env_m *data)
 {
     static bool last_fault = false;
-    static uint8_t fail_streak = 0;
 
-    /* The temperature is only read if the humidity read was OK, so it counts once */
-    int n_fail = (ret_adc < 0) + (ret_hum < 0) +
-                 ((ret_hum == 0 && ret_temp < 0) ? 1 : 0);
+    /* Store sensor read results: 0 = OK, -1 = error */
+    data->ldr_valid = ret_adc;
+    data->si7021_valid = (ret_hum < 0 || ret_temp < 0) ? -1 : 0;
 
-    /* The status must be computed BEFORE deciding if there is a fault */
-    if (n_fail >= 2) {
-        data->status = MULTIPLE_FAIL;
-    } else if (ret_hum < 0) {
-        data->status = SI7021_FAIL;
-    } else if (ret_temp < 0) {
-        data->status = TEMP_FAIL;
-    } else if (ret_adc < 0) {
-        data->status = LIGHT_FAIL;
-    } else {
-        data->status = ALL_OK;
-    }
+    /* Check whether any sensor has failed */
+    bool fault = (data->ldr_valid < 0 || data->si7021_valid < 0);
 
-    if (data->status == ALL_OK) {
-        fail_streak = 0;
-    } else if (tolerate) {
-        if (fail_streak < ENV_ERR_LIMIT) {
-            fail_streak++;              /* saturates at ENV_ERR_LIMIT */
-        }
-        if (fail_streak < ENV_ERR_LIMIT) {
-            data->status = ALL_OK;      /* isolated error: keep the last valid values */
-        }
-    }
-
-    bool fault = (data->status != ALL_OK);
-
-    /* Keep only the latest message (put first, then notify) */
+    /* Publish the latest measurements */
     k_msgq_purge(&env_q);
     k_msgq_put(&env_q, data, K_NO_WAIT);
 
-    /* Wake main only when the sensor goes healthy -> faulty or back */
+    /* Notify main only when the global state changes */
     if (fault != last_fault) {
         last_fault = fault;
         k_event_post(&main_events, EVT_DRONE);
     }
 }
-
-
 
 void my_thread_enviroment(void *p1, void *p2, void *p3)
 {
@@ -316,7 +292,7 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
 
         struct env_m menv_err = {0};
 
-        env_publish(init_adc, init_hum, init_hum, &menv_err, false);
+        env_publish(init_adc, init_hum, init_hum, &menv_err);
         // maybe it can be change for the semaphore of the sensor
         k_sleep(K_SECONDS(2)); // this is only in case an error 
     }
@@ -332,7 +308,7 @@ void my_thread_enviroment(void *p1, void *p2, void *p3)
         int ret_hum  = measure_humidity(&menv.hum);
         int ret_temp = (ret_hum == 0) ? measure_temperature(&menv.temp) : ret_hum;
 
-        env_publish(ret_adc, ret_hum, ret_temp, &menv, true);
+        env_publish(ret_adc, ret_hum, ret_temp, &menv);
         last = menv;
         int64_t now = k_uptime_get();
         bool active = normal_active;

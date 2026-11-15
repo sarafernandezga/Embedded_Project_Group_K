@@ -26,7 +26,7 @@ struct imu_m {
     float vx, vy, vz;          // Velocidades [m/s]
     float x, y, z;             // Posición local [m]
     enum drone_state state;    // Estado (IDLE, FLYING, PROBLEM)
-    int status;                // 0 = OK, -1 = Error I2C
+    int valid_imu;                // 0 = OK, -1 = Error I2C
 };
 
 // Declaración externa de la cola de mensajes (para que acceda main.c)
