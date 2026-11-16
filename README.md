@@ -813,6 +813,44 @@ $$
 
 Equivalent calculations are used for the Y and Z coordinates.
 
+**Zero-Velocity Update (ZUPT) for drift mitigation**
+
+Numerical integration of acceleration can cause errors to accumulate over time. Even small residual acceleration errors can produce an increasing velocity error, which subsequently affects the estimated position.
+
+To mitigate this effect when the tracker is stationary, the firmware implements a Zero-Velocity Update (ZUPT) mechanism.
+
+The mechanism uses the state calculated by the `calcular_estado()` function. A counter, represented by the `idle_time` variable, accumulates the elapsed time (`dt`) while the calculated state remains `IDLE`. If the state changes to `FLYING` or `PROBLEM`, this counter is reset to zero.
+
+The implementation uses the `ZUPT_HOLD_S` constant, configured to `0.5` seconds. Therefore, the tracker must remain continuously classified as `IDLE` for at least 0.5 seconds before the zero-velocity correction is applied.
+
+The condition is expressed as:
+
+$$
+idle\_time =
+\begin{cases}
+idle\_time + dt, & \text{if state = IDLE}\\
+0, & \text{otherwise}
+\end{cases}
+$$
+
+When the accumulated time reaches the configured threshold:
+
+$$
+idle\_time \geq 0.5\text{ s}
+$$
+
+the firmware resets the three velocity components:
+
+$$
+v_x=v_y=v_z=0
+$$
+
+While this condition remains satisfied, velocity integration and position updates are skipped. This prevents residual acceleration from continuing to increase the estimated velocity and position while the tracker is considered stationary.
+
+If the tracker leaves the `IDLE` state, the counter is reset and the normal velocity and position integration resumes.
+
+This correction reduces the accumulation of velocity drift during stationary periods. However, it does not directly correct the position estimate or remove errors accumulated before the ZUPT condition is reached. The resulting position therefore remains an approximate inertial estimate.
+
 **Orientation estimation**
 
 The orientation angles are estimated separately by integrating the angular velocity measured by the gyroscope:
@@ -833,7 +871,7 @@ The resulting angles are expressed in degrees.
 
 These calculations provide a basic inertial estimate. The low-pass filter reduces the influence of gravity on the acceleration used for velocity and position estimation. However, this is an approximate compensation: it assumes that gravity changes slowly compared with the movement being measured. During sustained acceleration, part of the actual movement may be incorporated into the gravity estimate. Similarly, changes in sensor orientation can affect how gravity is distributed across the three axes.
 
-The implementation does not perform a full coordinate-frame transformation or use a sensor-fusion algorithm to separate gravity from movement. Consequently, velocity and position estimates remain approximate and accumulate errors over time. The orientation estimates also experience drift because they are obtained by directly integrating gyroscope measurements, particularly in the yaw angle.
+The implementation does not perform a full coordinate-frame transformation or use a sensor-fusion algorithm to separate gravity from movement. Consequently, velocity and position estimates remain approximate and accumulate errors over time. The ZUPT mechanism mitigates velocity drift during stationary periods, but it does not eliminate accumulated position error. The orientation estimates also experience drift because they are obtained by directly integrating gyroscope measurements, particularly in the yaw angle.
 
 #### Tracker state estimation
 
@@ -862,6 +900,8 @@ The state is determined according to the following conditions:
 1. **PROBLEM:** if the acceleration magnitude exceeds 25 m/s², a possible impact or abnormal acceleration is detected.
 2. **FLYING:** if the acceleration magnitude differs from 9.81 m/s² by more than 0.5 m/s², or the angular velocity magnitude exceeds 5 °/s.
 3. **IDLE:** if neither of the previous conditions is met.
+
+The `IDLE` state is also used by the ZUPT mechanism described above. Remaining in this state for at least 0.5 seconds triggers the velocity reset and temporarily stops position integration.
 
 These calculations use the original accelerometer measurements, before the gravity-filter correction used for velocity and position estimation.
 

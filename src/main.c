@@ -65,7 +65,7 @@ static void enter_mode(enum operating_mode mode, struct system_messages *data_se
     k_timer_start(&imu_timer,        K_NO_WAIT, K_MSEC(cfg->imu_ms));
     k_timer_start(&main_timer, boot ? K_MSEC(BOOT_SETTLE_MS) : K_NO_WAIT, K_MSEC(cfg->main_ms));
 
-    rgb_set_pulsed(mode == NORMAL_MODE || mode == TEST_MODE);   /* ver sección 5 */
+    rgb_set_pulsed(mode == NORMAL_MODE || mode == TEST_MODE || mode == SIMU_MODE);   /* ver sección 5 */
 
     normal_exit();     /* the NORMAL case below sets it again */
     switch (mode) {

@@ -271,7 +271,7 @@ void IMU_measurement(void *p1, void *p2, void *p3) {
 /* Start enviroment thread */
 K_THREAD_DEFINE(
     IMU_measurement_id,    /* Thread identifier */
-    2048,                       /* Stack size */
+    1024,                       /* Stack size */
     IMU_measurement,       /* Entry function */
     NULL, NULL, NULL,           /* Parameters */
     4,                          /* Priority */
