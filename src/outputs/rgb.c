@@ -88,8 +88,8 @@ static void rgb_apply(enum rgb_modes mode)
 
 }
 
-#define RGB_ON_MS      50
-#define RGB_PERIOD_MS  1000
+#define RGB_ON_MS      3
+#define RGB_PERIOD_MS  10
 
 static enum rgb_modes rgb_current = OFF_LED;
 static bool rgb_pulsed;
